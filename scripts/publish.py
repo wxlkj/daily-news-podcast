@@ -145,8 +145,9 @@ for old in items_sorted[KEEP_DAYS:]:
 tree.write(FEED, encoding="utf-8", xml_declaration=True)
 
 
-# 4) 提交并推送 feed.xml + 新音频（git add 目录会同步增删）
-run(["git", "add", "docs/feed.xml", "docs/audio/"])
+# 4) 提交并推送 feed.xml + 新音频（音频被 .gitignore 的 *.mp3 忽略，必须 -f 强制添加）
+run(["git", "add", "docs/feed.xml"])
+run(["git", "add", "-f", "docs/audio/"])
 commit = subprocess.run(["git", "commit", "-m", f"update feed & audio {TAG}"],
                         capture_output=True, text=True)
 print(commit.stdout, commit.stderr)
