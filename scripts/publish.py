@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 import datetime
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -53,17 +54,12 @@ print("音频已托管到 Pages:", asset_url)
 
 # 2) 上传 Release 作备份（可选，失败不影响 Pages 托管）
 try:
-    r = subprocess.run(
-        ["gh", "api", "GET", f"/repos/{REPO}/releases/tags/{TAG}"],
-        capture_output=True, text=True,
-    )
-    if r.returncode == 0:
-        rid = json.loads(r.stdout).get("id")
-        if rid:
-            subprocess.run(["gh", "api", "DELETE", f"/repos/{REPO}/releases/{rid}"],
-                           capture_output=True, text=True)
+    # 同一天重跑时 tag 已存在，先清理旧 release 与 tag（双保险）
+    subprocess.run(["gh", "release", "delete", TAG, "-y", "--cleanup-tag"],
+                   capture_output=True, text=True)
     subprocess.run(["gh", "api", "DELETE", f"/repos/{REPO}/git/refs/tags/{TAG}"],
                    capture_output=True, text=True)
+    time.sleep(1)
     run([
         "gh", "release", "create", TAG, "episode_final.mp3",
         "--title", f"时政简报 {TAG}", "--notes", "自动生成（备份）",
@@ -154,6 +150,18 @@ print(commit.stdout, commit.stderr)
 branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"]).decode().strip()
 if branch in ("HEAD", ""):
     branch = "main"
-run(["git", "push", "origin", f"HEAD:{branch}"])
+# git push 加重试：应对 GitHub 服务端瞬时 500（remote: Internal Server Error）
+for attempt in range(1, 6):
+    p = subprocess.run(["git", "push", "origin", f"HEAD:{branch}"],
+                       capture_output=True, text=True)
+    if p.returncode == 0:
+        print("git push 成功")
+        break
+    print(f"!! git push 第{attempt}次失败（退出码 {p.returncode}），3 秒后重试…")
+    print(p.stderr.strip()[:300])
+    if attempt < 5:
+        time.sleep(3)
+else:
+    print("!! git push 多次失败，但音频与 feed 已在本地生成，可手动重试或等下次运行", file=sys.stderr)
 
 print("发布完成：", TAG)
