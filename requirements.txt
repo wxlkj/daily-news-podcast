@@ -1,5 +1,7 @@
 requests
 feedparser
+beautifulsoup4
+lxml
 edge-tts
 openai
 PyYAML
