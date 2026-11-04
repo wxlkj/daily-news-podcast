@@ -75,10 +75,6 @@
       background: var(--accent); display: flex; align-items: center; justify-content: center;
     }
     .p-btn svg { width: 20px; height: 20px; fill: #fff; }
-    .spd {
-      width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line);
-      background: transparent; color: var(--sub); font-size: 12px; font-weight: 600; flex-shrink: 0;
-    }
   </style>
 </head>
 <body>
@@ -103,7 +99,6 @@
         <div class="p-bar"><div class="p-prog" id="p-prog"></div></div>
         <div class="p-time"><span id="p-cur">0:00</span><span id="p-dur">0:00</span></div>
       </div>
-      <button class="spd" id="spd">1x</button>
       <button class="p-btn" id="p-btn" aria-label="播放/暂停">
         <svg id="p-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
       </button>
@@ -208,14 +203,6 @@
     audio.onwaiting = () => { $("p-status").textContent = "缓冲中…"; };
     audio.onstalled = () => { $("p-status").textContent = "缓冲中…"; };
     audio.onerror = () => { const s = $("p-status"); s.textContent = "音频加载失败，请检查网络后刷新"; s.classList.add("err"); };
-
-    const speeds = [1, 1.25, 1.5, 0.75];
-    let si = 0;
-    $("spd").onclick = () => {
-      si = (si + 1) % speeds.length;
-      audio.playbackRate = speeds[si];
-      $("spd").textContent = speeds[si] + "x";
-    };
 
     load();
   </script>
