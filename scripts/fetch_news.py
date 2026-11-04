@@ -179,12 +179,13 @@ def top_n(items, n=10):
     return out
 
 
-# 国内：央视网页抓取（真实日期）+ 国内 RSS 补充，合并去重取前 10
-domestic_web = fetch_domestic(DOMESTIC_URLS, limit=10)
-domestic_rss = fetch_rss_domestic(DOMESTIC_RSS)
-domestic = merge_dedup(domestic_web + domestic_rss, n=10)
-# 国际：RSS 聚合（真机在境外 runner 上验证），取前 10
-international = top_n(fetch_rss([s["url"] for s in SOURCES.get("international", [])]), n=10)
+# 国内：央视网页抓取（真实日期）+ 国内 RSS 补充，合并去重取前 15 条候选
+# （候选放宽，最终条数由润色阶段根据当天新闻量与 10–20 分钟时长要求决定）
+domestic_web = fetch_domestic(DOMESTIC_URLS, limit=15)
+domestic_rss = fetch_rss_domestic(DOMESTIC_RSS, per=15)
+domestic = merge_dedup(domestic_web + domestic_rss, n=15)
+# 国际：RSS 聚合（真机在境外 runner 上验证），取前 15 条候选
+international = top_n(fetch_rss([s["url"] for s in SOURCES.get("international", [])]), n=15)
 
 result = {"domestic": domestic, "international": international, "commentary": []}
 with open("news.json", "w", encoding="utf-8") as f:
