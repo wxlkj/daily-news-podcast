@@ -68,9 +68,19 @@ run([
     "--notes", "自动生成",
 ])
 
-# 2) 更新 feed.xml，插入新 item（放到最前）
+# 2) 更新 feed.xml，插入新 item（插到首个 item 之前，保持元数据在最前）
 tree = ET.parse(FEED)
 channel = tree.find("channel")
+
+# 兜底：确保 channel 含 link 与 itunes:image（封面），缺则补上
+COVER = "https://wxlkj.github.io/daily-news-podcast/cover.png"
+if channel.find("link") is None:
+    lk = ET.SubElement(channel, "link")
+    lk.text = "https://wxlkj.github.io/daily-news-podcast/"
+if channel.find("{%s}image" % NS_ITUNES) is None:
+    img = ET.SubElement(channel, "{%s}image" % NS_ITUNES)
+    img.set("href", COVER)
+
 item = ET.SubElement(channel, "item")
 title = ET.SubElement(item, "title")
 title.text = f"时政简报 {TAG}（国内5条 + 国际5条）"
@@ -89,8 +99,15 @@ except FileNotFoundError:
 enc.set("type", "audio/mpeg")
 guid = ET.SubElement(item, "guid")
 guid.text = TAG
+# 从 channel 末尾摘出刚建的 item，插到第一个已有 item 之前（保持元数据在前）
 channel.remove(item)
-channel.insert(0, item)
+children = list(channel)
+idx = len(children)
+for i, c in enumerate(children):
+    if c.tag == "item":
+        idx = i
+        break
+channel.insert(idx, item)
 tree.write(FEED, encoding="utf-8", xml_declaration=True)
 
 # 3) 提交并推送 feed.xml
