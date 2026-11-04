@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""发布：上传 MP3 到 GitHub Release，更新 docs/feed.xml，滚动清理 90 天前的旧 Release。"""
+"""发布：把 MP3 托管到 GitHub Pages（与网页同源，国内可访问），更新 docs/feed.xml，滚动清理旧期。"""
 import os
 import json
+import shutil
 import subprocess
 import sys
 import datetime
@@ -11,8 +12,10 @@ from pathlib import Path
 REPO = "wxlkj/daily-news-podcast"
 TAG = datetime.datetime.now().strftime("%Y-%m-%d")
 FEED = Path("docs/feed.xml")
+AUDIO_DIR = Path("docs/audio")
 NS_ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 ET.register_namespace("itunes", NS_ITUNES)
+KEEP_DAYS = 14  # 滚动保留最近 14 期
 
 
 def run(cmd, check=True, **kw):
@@ -24,55 +27,57 @@ def run(cmd, check=True, **kw):
         raise
 
 
-def gh_api(method, path, check=True, **kw):
-    """用 gh api 直接调用 GitHub REST API（读取 GH_TOKEN 环境变量）。"""
-    cmd = ["gh", "api", "-X", method, path]
-    print(">", "gh api", method, path)
-    r = subprocess.run(cmd, capture_output=True, text=True, **kw)
-    if check and r.returncode != 0:
-        print(f"!! gh api 失败({method} {path}): {r.stderr.strip()}", file=sys.stderr)
-        raise subprocess.CalledProcessError(r.returncode, cmd)
-    return r
-
-
-# 0) 认证：GitHub Actions 中通过 GITHUB_TOKEN 登录 gh，并配置 git 远程以便推送
+# 0) 认证：GitHub Actions 中通过 GITHUB_TOKEN 配置 git 远程以便推送
 token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
 if token:
-    # 配置 git 远程，确保 git push 使用 token 认证
     run(["git", "remote", "set-url", "origin", f"https://x-access-token:{token}@github.com/{REPO}.git"])
-    # 配置 git 提交者身份（GitHub Actions 默认没有，不配置 git commit 会失败）
     run(["git", "config", "user.name", "github-actions[bot]"])
     run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"])
     run(["git", "config", "safe.directory", "."])
 else:
-    print("警告：未检测到 GH_TOKEN / GITHUB_TOKEN，gh 与 git 可能认证失败", file=sys.stderr)
+    print("警告：未检测到 GH_TOKEN / GITHUB_TOKEN，git 推送可能失败", file=sys.stderr)
 
 
-# 1) 清理当天已存在的 release 与 tag（重跑场景），再创建并上传 MP3
-asset_url = f"https://github.com/{REPO}/releases/download/{TAG}/episode_final.mp3"
-# 1a) 删除已存在的 release（按 tag 查 id 后删除）
-r = gh_api("GET", f"/repos/{REPO}/releases/tags/{TAG}", check=False)
-if r.returncode == 0:
-    try:
+# 1) 复制 MP3 到 Pages 托管目录（与网页同源，国内可访问）
+AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+src = Path("episode_final.mp3")
+if not src.exists():
+    print("!! 未找到 episode_final.mp3，发布中止", file=sys.stderr)
+    sys.exit(1)
+shutil.copy(src, AUDIO_DIR / f"{TAG}.mp3")
+audio_size = src.stat().st_size
+# 关键：使用 GitHub Pages 域名，国内可访问（与播放器页面同源）
+asset_url = f"https://wxlkj.github.io/daily-news-podcast/audio/{TAG}.mp3"
+print("音频已托管到 Pages:", asset_url)
+
+
+# 2) 上传 Release 作备份（可选，失败不影响 Pages 托管）
+try:
+    r = subprocess.run(
+        ["gh", "api", "GET", f"/repos/{REPO}/releases/tags/{TAG}"],
+        capture_output=True, text=True,
+    )
+    if r.returncode == 0:
         rid = json.loads(r.stdout).get("id")
-    except json.JSONDecodeError:
-        rid = None
-    if rid:
-        gh_api("DELETE", f"/repos/{REPO}/releases/{rid}")
-# 1b) 删除已存在的 tag（gh release create 不能建在已存在 tag 上）
-gh_api("DELETE", f"/repos/{REPO}/git/refs/tags/{TAG}", check=False)
-# 1c) 创建 release 并上传 MP3
-run([
-    "gh", "release", "create", TAG, "episode_final.mp3",
-    "--title", f"时政简报 {TAG}",
-    "--notes", "自动生成",
-])
+        if rid:
+            subprocess.run(["gh", "api", "DELETE", f"/repos/{REPO}/releases/{rid}"],
+                           capture_output=True, text=True)
+    subprocess.run(["gh", "api", "DELETE", f"/repos/{REPO}/git/refs/tags/{TAG}"],
+                   capture_output=True, text=True)
+    run([
+        "gh", "release", "create", TAG, "episode_final.mp3",
+        "--title", f"时政简报 {TAG}", "--notes", "自动生成（备份）",
+    ], check=False)
+    print("Release 备份完成")
+except Exception as e:
+    print("（Release 备份失败，忽略，不影响 Pages 托管）:", e)
 
-# 2) 更新 feed.xml，插入新 item（插到首个 item 之前，保持元数据在最前）
+
+# 3) 更新 feed.xml
 tree = ET.parse(FEED)
 channel = tree.find("channel")
 
-# 兜底：确保 channel 含 link 与 itunes:image（封面），缺则补上
+# 兜底：确保 channel 含 link 与 itunes:image（封面）
 COVER = "https://wxlkj.github.io/daily-news-podcast/cover.png"
 if channel.find("link") is None:
     lk = ET.SubElement(channel, "link")
@@ -81,31 +86,34 @@ if channel.find("{%s}image" % NS_ITUNES) is None:
     img = ET.SubElement(channel, "{%s}image" % NS_ITUNES)
     img.set("href", COVER)
 
+# 重跑去重：删除当天已存在的 item（避免同一天累积多条重复）
+for it in list(channel.findall("item")):
+    if (it.findtext("guid") == TAG) or (TAG in (it.findtext("title") or "")):
+        channel.remove(it)
+
+# 新建 item
 item = ET.SubElement(channel, "item")
-title = ET.SubElement(item, "title")
 try:
     _n = json.load(open("news.json", encoding="utf-8"))
     _nd = len(_n.get("domestic", []))
     _ni = len(_n.get("international", []))
 except Exception:
     _nd = _ni = 10
+title = ET.SubElement(item, "title")
 title.text = f"时政简报 {TAG}（国内{_nd}条 + 国际{_ni}条）"
 pub = ET.SubElement(item, "pubDate")
 pub.text = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime(
     "%a, %d %b %Y %H:%M:%S +0800"
 )
 desc = ET.SubElement(item, "description")
-desc.text = f"每日时政简报 {TAG}：国内与国际各5条要闻，约10-12分钟。"
+desc.text = f"每日时政简报 {TAG}：国内与国际各{_nd}条要闻，约10-12分钟。"
 enc = ET.SubElement(item, "enclosure")
 enc.set("url", asset_url)
-try:
-    enc.set("length", str(Path("episode_final.mp3").stat().st_size))
-except FileNotFoundError:
-    enc.set("length", "0")
+enc.set("length", str(audio_size))
 enc.set("type", "audio/mpeg")
 guid = ET.SubElement(item, "guid")
 guid.text = TAG
-# 从 channel 末尾摘出刚建的 item，插到第一个已有 item 之前（保持元数据在前）
+# 把新 item 插到第一个已有 item 之前（保持频道元数据在最前）
 channel.remove(item)
 children = list(channel)
 idx = len(children)
@@ -114,33 +122,37 @@ for i, c in enumerate(children):
         idx = i
         break
 channel.insert(idx, item)
+
+# 滚动保留最近 KEEP_DAYS 期：删除更早的 item 及其本地音频文件
+items = channel.findall("item")
+
+def parse_date(it):
+    try:
+        return datetime.datetime.strptime(it.findtext("pubDate"),
+                                          "%a, %d %b %Y %H:%M:%S +0800")
+    except Exception:
+        return datetime.datetime.min
+
+items_sorted = sorted(items, key=parse_date, reverse=True)
+for old in items_sorted[KEEP_DAYS:]:
+    g = old.findtext("guid") or (old.findtext("title") or "")[:10]
+    channel.remove(old)
+    af = AUDIO_DIR / f"{g}.mp3"
+    if af.exists():
+        af.unlink()
+        print("已清理旧音频:", af.name)
+
 tree.write(FEED, encoding="utf-8", xml_declaration=True)
 
-# 3) 提交并推送 feed.xml
-run(["git", "add", "docs/feed.xml"])
-# 即使无变更也不报错退出
-commit = subprocess.run(["git", "commit", "-m", f"update feed {TAG}"], capture_output=True, text=True)
+
+# 4) 提交并推送 feed.xml + 新音频（git add 目录会同步增删）
+run(["git", "add", "docs/feed.xml", "docs/audio/"])
+commit = subprocess.run(["git", "commit", "-m", f"update feed & audio {TAG}"],
+                        capture_output=True, text=True)
 print(commit.stdout, commit.stderr)
-# 显式推送当前分支（避免 detached HEAD 场景）
 branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"]).decode().strip()
 if branch in ("HEAD", ""):
     branch = "main"
 run(["git", "push", "origin", f"HEAD:{branch}"])
-
-# 4) 滚动清理：删除 90 天前的 Release（尽力而为，失败不影响已发布结果）
-cutoff = (datetime.datetime.now() - datetime.timedelta(days=90)).strftime("%Y-%m-%d")
-try:
-    out = subprocess.run(["gh", "release", "list", "--limit", "200"], capture_output=True, text=True).stdout
-    for line in out.splitlines():
-        parts = line.split()
-        if not parts:
-            continue
-        tag = parts[0]  # 第一列为 tag
-        if tag < cutoff:
-            d = subprocess.run(["gh", "release", "delete", tag, "-y"], capture_output=True, text=True)
-            if d.returncode != 0:
-                print(f"  清理旧 release {tag} 失败（忽略）：{d.stderr.strip()}")
-except Exception as e:
-    print("  滚动清理过程中出现异常（忽略）：", e)
 
 print("发布完成：", TAG)
