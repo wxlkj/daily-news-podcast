@@ -83,7 +83,13 @@ if channel.find("{%s}image" % NS_ITUNES) is None:
 
 item = ET.SubElement(channel, "item")
 title = ET.SubElement(item, "title")
-title.text = f"时政简报 {TAG}（国内5条 + 国际5条）"
+try:
+    _n = json.load(open("news.json", encoding="utf-8"))
+    _nd = len(_n.get("domestic", []))
+    _ni = len(_n.get("international", []))
+except Exception:
+    _nd = _ni = 10
+title.text = f"时政简报 {TAG}（国内{_nd}条 + 国际{_ni}条）"
 pub = ET.SubElement(item, "pubDate")
 pub.text = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime(
     "%a, %d %b %Y %H:%M:%S +0800"
