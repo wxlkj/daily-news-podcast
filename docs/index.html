@@ -65,8 +65,17 @@
     .p-cover { width: 46px; height: 46px; border-radius: 9px; object-fit: cover; background:#20324f; flex-shrink:0; }
     .p-info { flex: 1; min-width: 0; }
     .p-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .p-bar { height: 4px; background: var(--line); border-radius: 3px; margin-top: 7px; overflow: hidden; }
+    .p-bar { position: relative; height: 22px; margin-top: 7px; cursor: pointer; touch-action: none; }
+    .p-track {
+      position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
+      height: 4px; background: var(--line); border-radius: 3px; overflow: hidden;
+    }
     .p-prog { height: 100%; width: 0; background: var(--accent); border-radius: 3px; }
+    .p-handle {
+      position: absolute; top: 50%; left: 0; width: 13px; height: 13px; margin-left: -6px;
+      transform: translateY(-50%); background: #fff; border-radius: 50%;
+      box-shadow: 0 1px 4px rgba(0,0,0,.45); pointer-events: none;
+    }
     .p-time { font-size: 11px; color: var(--sub); margin-top: 4px; display: flex; justify-content: space-between; }
     .p-status { font-size: 11px; color: #ffb454; margin-top: 3px; min-height: 14px; }
     .p-status.err { color: #ff7a7a; }
@@ -96,7 +105,10 @@
       <div class="p-info">
         <div class="p-title" id="p-title">—</div>
         <div class="p-status" id="p-status"></div>
-        <div class="p-bar"><div class="p-prog" id="p-prog"></div></div>
+        <div class="p-bar" id="p-bar">
+          <div class="p-track"><div class="p-prog" id="p-prog"></div></div>
+          <div class="p-handle" id="p-handle"></div>
+        </div>
         <div class="p-time"><span id="p-cur">0:00</span><span id="p-dur">0:00</span></div>
       </div>
       <button class="p-btn" id="p-btn" aria-label="播放/暂停">
@@ -110,7 +122,47 @@
     const ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd";
     const $ = (id) => document.getElementById(id);
     const audio = $("audio");
+    const bar = $("p-bar");
+    const handle = $("p-handle");
     let current = null;
+    let dragging = false;
+
+    function updateProgress(p) {
+      p = Math.max(0, Math.min(100, p));
+      $("p-prog").style.width = p + "%";
+      handle.style.left = p + "%";
+    }
+    function posToRatio(clientX) {
+      const rect = bar.getBoundingClientRect();
+      let r = (clientX - rect.left) / rect.width;
+      return Math.max(0, Math.min(1, r));
+    }
+    function dragStart(e) {
+      if (!audio.duration || isNaN(audio.duration)) return;
+      dragging = true;
+      dragMove(e);
+    }
+    function dragMove(e) {
+      if (!dragging) return;
+      const x = e.touches ? e.touches[0].clientX : e.clientX;
+      const r = posToRatio(x);
+      updateProgress(r * 100);
+      $("p-cur").textContent = fmt(r * audio.duration);
+      if (e.cancelable) e.preventDefault();
+    }
+    function dragEnd(e) {
+      if (!dragging) return;
+      dragging = false;
+      const x = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+      const r = posToRatio(x);
+      if (audio.duration) audio.currentTime = r * audio.duration;
+    }
+    bar.addEventListener("touchstart", dragStart, { passive: false });
+    bar.addEventListener("touchmove", dragMove, { passive: false });
+    bar.addEventListener("touchend", dragEnd);
+    bar.addEventListener("mousedown", dragStart);
+    document.addEventListener("mousemove", dragMove);
+    document.addEventListener("mouseup", dragEnd);
 
     function fmt(s) {
       if (!s || isNaN(s)) return "0:00";
@@ -193,8 +245,9 @@
     audio.onplay = () => { $("p-icon").innerHTML = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>'; };
     audio.onpause = () => { $("p-icon").innerHTML = '<path d="M8 5v14l11-7z"/>'; };
     audio.ontimeupdate = () => {
+      if (dragging) return;
       const p = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
-      $("p-prog").style.width = p + "%";
+      updateProgress(p);
       $("p-cur").textContent = fmt(audio.currentTime);
     };
     audio.onloadedmetadata = () => { $("p-dur").textContent = fmt(audio.duration); };
