@@ -100,13 +100,13 @@ try:
 except Exception:
     _nd = _ni = 10
 title = ET.SubElement(item, "title")
-title.text = f"时政简报 {TAG}（国内{_nd}条 + 国际{_ni}条）"
+title.text = f"时政简报 {TAG}（国内外时政）"
 pub = ET.SubElement(item, "pubDate")
 pub.text = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime(
     "%a, %d %b %Y %H:%M:%S +0800"
 )
 desc = ET.SubElement(item, "description")
-desc.text = f"每日时政简报 {TAG}：国内与国际各{_nd}条要闻，约10-12分钟。"
+desc.text = f"每日时政简报 {TAG}：国内外时政要闻，约10–20分钟。"
 enc = ET.SubElement(item, "enclosure")
 enc.set("url", asset_url)
 enc.set("length", str(audio_size))
