@@ -68,6 +68,8 @@
     .p-bar { height: 4px; background: var(--line); border-radius: 3px; margin-top: 7px; overflow: hidden; }
     .p-prog { height: 100%; width: 0; background: var(--accent); border-radius: 3px; }
     .p-time { font-size: 11px; color: var(--sub); margin-top: 4px; display: flex; justify-content: space-between; }
+    .p-status { font-size: 11px; color: #ffb454; margin-top: 3px; min-height: 14px; }
+    .p-status.err { color: #ff7a7a; }
     .p-btn {
       width: 46px; height: 46px; border-radius: 50%; border: none; flex-shrink: 0;
       background: var(--accent); display: flex; align-items: center; justify-content: center;
@@ -97,6 +99,7 @@
       <img class="p-cover" id="p-cover" alt="" />
       <div class="p-info">
         <div class="p-title" id="p-title">—</div>
+        <div class="p-status" id="p-status"></div>
         <div class="p-bar"><div class="p-prog" id="p-prog"></div></div>
         <div class="p-time"><span id="p-cur">0:00</span><span id="p-dur">0:00</span></div>
       </div>
@@ -171,11 +174,18 @@
       if (el) el.classList.add("active");
       $("p-title").textContent = title;
       $("player").classList.add("show");
+      const st = $("p-status");
+      st.classList.remove("err");
+      st.textContent = "加载中…";
       if (current !== url) {
         audio.src = url;
         current = url;
       }
-      audio.play().catch((e) => console.warn("播放失败:", e));
+      audio.play().catch((e) => {
+        st.textContent = "播放失败，请检查网络后下拉刷新";
+        st.classList.add("err");
+        console.warn("播放失败:", e);
+      });
     }
 
     function toggle() {
@@ -193,6 +203,11 @@
       $("p-cur").textContent = fmt(audio.currentTime);
     };
     audio.onloadedmetadata = () => { $("p-dur").textContent = fmt(audio.duration); };
+    audio.oncanplay = () => { const s = $("p-status"); s.textContent = ""; s.classList.remove("err"); };
+    audio.onplaying = () => { const s = $("p-status"); s.textContent = ""; s.classList.remove("err"); };
+    audio.onwaiting = () => { $("p-status").textContent = "缓冲中…"; };
+    audio.onstalled = () => { $("p-status").textContent = "缓冲中…"; };
+    audio.onerror = () => { const s = $("p-status"); s.textContent = "音频加载失败，请检查网络后刷新"; s.classList.add("err"); };
 
     const speeds = [1, 1.25, 1.5, 0.75];
     let si = 0;
