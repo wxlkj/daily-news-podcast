@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """发布：上传 MP3 到 GitHub Release，更新 docs/feed.xml，滚动清理 90 天前的旧 Release。"""
 import os
+import json
 import subprocess
 import sys
 import datetime
@@ -23,18 +24,20 @@ def run(cmd, check=True, **kw):
         raise
 
 
+def gh_api(method, path, check=True, **kw):
+    """用 gh api 直接调用 GitHub REST API（读取 GH_TOKEN 环境变量）。"""
+    cmd = ["gh", "api", "-X", method, path]
+    print(">", "gh api", method, path)
+    r = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    if check and r.returncode != 0:
+        print(f"!! gh api 失败({method} {path}): {r.stderr.strip()}", file=sys.stderr)
+        raise subprocess.CalledProcessError(r.returncode, cmd)
+    return r
+
+
 # 0) 认证：GitHub Actions 中通过 GITHUB_TOKEN 登录 gh，并配置 git 远程以便推送
 token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
 if token:
-    # 显式登录，避免依赖 runner 默认的 gh 认证状态
-    login = subprocess.run(
-        f"echo '{token}' | gh auth login --with-token --hostname github.com",
-        shell=True,
-        capture_output=True,
-        text=True,
-    )
-    if login.returncode != 0:
-        print("警告：gh auth login 失败，回退到 GH_TOKEN 环境变量：", login.stderr, file=sys.stderr)
     # 配置 git 远程，确保 git push 使用 token 认证
     run(["git", "remote", "set-url", "origin", f"https://x-access-token:{token}@github.com/{REPO}.git"])
     # 配置 git 提交者身份（GitHub Actions 默认没有，不配置 git commit 会失败）
@@ -45,15 +48,20 @@ else:
     print("警告：未检测到 GH_TOKEN / GITHUB_TOKEN，gh 与 git 可能认证失败", file=sys.stderr)
 
 
-# 1) 上传 MP3 到 Release（如当天已存在则先删除，支持手动重跑）
+# 1) 清理当天已存在的 release 与 tag（重跑场景），再创建并上传 MP3
 asset_url = f"https://github.com/{REPO}/releases/download/{TAG}/episode_final.mp3"
-# 先尝试删除当天已存在的 release 及其 tag（重跑场景），不存在则忽略
-delp = subprocess.run(
-    ["gh", "release", "delete", TAG, "-y", "--cleanup-tag"],
-    capture_output=True, text=True,
-)
-if delp.returncode != 0:
-    print(f"（未找到已存在的 release {TAG}，直接创建）")
+# 1a) 删除已存在的 release（按 tag 查 id 后删除）
+r = gh_api("GET", f"/repos/{REPO}/releases/tags/{TAG}", check=False)
+if r.returncode == 0:
+    try:
+        rid = json.loads(r.stdout).get("id")
+    except json.JSONDecodeError:
+        rid = None
+    if rid:
+        gh_api("DELETE", f"/repos/{REPO}/releases/{rid}")
+# 1b) 删除已存在的 tag（gh release create 不能建在已存在 tag 上）
+gh_api("DELETE", f"/repos/{REPO}/git/refs/tags/{TAG}", check=False)
+# 1c) 创建 release 并上传 MP3
 run([
     "gh", "release", "create", TAG, "episode_final.mp3",
     "--title", f"时政简报 {TAG}",
@@ -96,15 +104,20 @@ if branch in ("HEAD", ""):
     branch = "main"
 run(["git", "push", "origin", f"HEAD:{branch}"])
 
-# 4) 滚动清理：删除 90 天前的 Release
+# 4) 滚动清理：删除 90 天前的 Release（尽力而为，失败不影响已发布结果）
 cutoff = (datetime.datetime.now() - datetime.timedelta(days=90)).strftime("%Y-%m-%d")
-out = subprocess.run(["gh", "release", "list", "--limit", "200"], capture_output=True, text=True).stdout
-for line in out.splitlines():
-    parts = line.split("\t")
-    if len(parts) < 3:
-        continue
-    tag = parts[0]
-    if tag < cutoff:
-        run(["gh", "release", "delete", tag, "-y"])
+try:
+    out = subprocess.run(["gh", "release", "list", "--limit", "200"], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        tag = parts[0]  # 第一列为 tag
+        if tag < cutoff:
+            d = subprocess.run(["gh", "release", "delete", tag, "-y"], capture_output=True, text=True)
+            if d.returncode != 0:
+                print(f"  清理旧 release {tag} 失败（忽略）：{d.stderr.strip()}")
+except Exception as e:
+    print("  滚动清理过程中出现异常（忽略）：", e)
 
 print("发布完成：", TAG)
