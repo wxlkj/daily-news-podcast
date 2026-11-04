@@ -26,11 +26,18 @@ resp = client.chat.completions.create(
         {"role": "user", "content": user_content},
     ],
     temperature=0.7,
-    max_tokens=8000,
+    # 硬上限保护：约 20 分钟对应的 token 量，避免输出过长为时长超上限
+    max_tokens=7000,
 )
 
 script = resp.choices[0].message.content
 with open("script.txt", "w", encoding="utf-8") as f:
     f.write(script)
 
-print(f"文稿已生成，约 {len(script)} 字")
+n = len(script)
+print(f"文稿已生成，约 {n} 字")
+# 时长软校验：2800~4800 字约为 10~20 分钟区间
+if n < 2600:
+    print(f"[警告] 文稿偏短（{n} 字），朗读可能不足 10 分钟，请检查新闻素材是否过少")
+elif n > 5200:
+    print(f"[警告] 文稿偏长（{n} 字），朗读可能超过 20 分钟，建议缩短")
