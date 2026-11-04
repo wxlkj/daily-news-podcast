@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>每日时政简报</title>
+    <description>每日自动生成的国内外时政语音简报（约10–12分钟，国内+国际各5条）</description>
+    <language>zh-CN</language>
+    <itunes:author>wxlkj</itunes:author>
+    <itunes:category text="News"/>
+  </channel>
+</rss>

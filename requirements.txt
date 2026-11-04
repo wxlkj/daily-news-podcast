@@ -1,0 +1,5 @@
+requests
+feedparser
+edge-tts
+openai
+PyYAML
