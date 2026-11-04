@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>每日时政简报</title>
+  <meta name="theme-color" content="#0f1a2e" />
+  <style>
+    :root {
+      --bg: #0f1a2e;
+      --bg2: #16243d;
+      --card: #1b2c49;
+      --accent: #4c8dff;
+      --text: #eef3fb;
+      --sub: #9fb2d0;
+      --line: #2a3c5e;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      background: linear-gradient(160deg, var(--bg), var(--bg2));
+      color: var(--text);
+      min-height: 100vh;
+      padding-bottom: 120px;
+    }
+    .wrap { max-width: 640px; margin: 0 auto; padding: 22px 16px; }
+    header { display: flex; gap: 16px; align-items: center; margin-bottom: 22px; }
+    .cover {
+      width: 92px; height: 92px; border-radius: 16px;
+      object-fit: cover; flex-shrink: 0;
+      box-shadow: 0 8px 22px rgba(0,0,0,.45);
+      background: #20324f;
+    }
+    .title { font-size: 21px; font-weight: 700; margin: 0 0 6px; }
+    .desc { font-size: 13px; color: var(--sub); line-height: 1.5; margin: 0; }
+    h2.section { font-size: 14px; color: var(--sub); font-weight: 600; margin: 8px 2px 12px; letter-spacing: .5px; }
+    .ep {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 14px; padding: 14px 15px; margin-bottom: 12px;
+      display: flex; gap: 12px; align-items: center; cursor: pointer;
+      transition: border-color .15s, transform .05s;
+    }
+    .ep:active { transform: scale(.99); }
+    .ep.active { border-color: var(--accent); }
+    .ep .play-ico {
+      width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+      background: var(--accent); display: flex; align-items: center; justify-content: center;
+    }
+    .ep .play-ico svg { width: 18px; height: 18px; fill: #fff; }
+    .ep .meta { min-width: 0; flex: 1; }
+    .ep .ep-title { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+    .ep .ep-date { font-size: 12px; color: var(--sub); }
+    .loading { text-align: center; color: var(--sub); padding: 40px 0; font-size: 14px; }
+    /* 底部播放条 */
+    .player {
+      position: fixed; left: 0; right: 0; bottom: 0;
+      background: rgba(20,32,53,.96); backdrop-filter: blur(10px);
+      border-top: 1px solid var(--line);
+      padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+      display: none;
+    }
+    .player.show { display: block; }
+    .player-inner { max-width: 640px; margin: 0 auto; display: flex; align-items: center; gap: 12px; }
+    .p-cover { width: 46px; height: 46px; border-radius: 9px; object-fit: cover; background:#20324f; flex-shrink:0; }
+    .p-info { flex: 1; min-width: 0; }
+    .p-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .p-bar { height: 4px; background: var(--line); border-radius: 3px; margin-top: 7px; overflow: hidden; }
+    .p-prog { height: 100%; width: 0; background: var(--accent); border-radius: 3px; }
+    .p-time { font-size: 11px; color: var(--sub); margin-top: 4px; display: flex; justify-content: space-between; }
+    .p-btn {
+      width: 46px; height: 46px; border-radius: 50%; border: none; flex-shrink: 0;
+      background: var(--accent); display: flex; align-items: center; justify-content: center;
+    }
+    .p-btn svg { width: 20px; height: 20px; fill: #fff; }
+    .spd {
+      width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line);
+      background: transparent; color: var(--sub); font-size: 12px; font-weight: 600; flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <img class="cover" id="cover" alt="封面" />
+      <div>
+        <h1 class="title" id="ch-title">每日时政简报</h1>
+        <p class="desc" id="ch-desc">加载中…</p>
+      </div>
+    </header>
+    <h2 class="section">节目列表</h2>
+    <div id="list"><div class="loading">正在加载最新节目…</div></div>
+  </div>
+
+  <div class="player" id="player">
+    <div class="player-inner">
+      <img class="p-cover" id="p-cover" alt="" />
+      <div class="p-info">
+        <div class="p-title" id="p-title">—</div>
+        <div class="p-bar"><div class="p-prog" id="p-prog"></div></div>
+        <div class="p-time"><span id="p-cur">0:00</span><span id="p-dur">0:00</span></div>
+      </div>
+      <button class="spd" id="spd">1x</button>
+      <button class="p-btn" id="p-btn" aria-label="播放/暂停">
+        <svg id="p-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+    </div>
+    <audio id="audio" preload="none"></audio>
+  </div>
+
+  <script>
+    const ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd";
+    const $ = (id) => document.getElementById(id);
+    const audio = $("audio");
+    let current = null;
+
+    function fmt(s) {
+      if (!s || isNaN(s)) return "0:00";
+      s = Math.floor(s);
+      const m = Math.floor(s / 60), ss = s % 60;
+      return m + ":" + String(ss).padStart(2, "0");
+    }
+
+    async function load() {
+      try {
+        const res = await fetch("feed.xml", { cache: "no-cache" });
+        const text = await res.text();
+        const doc = new DOMParser().parseFromString(text, "text/xml");
+        const ch = doc.querySelector("channel");
+        const chTitle = (ch.querySelector("title") || {}).textContent || "每日时政简报";
+        const chDesc = (ch.querySelector("description") || {}).textContent || "";
+        const imgEl = ch.getElementsByTagNameNS(ITUNES, "image")[0]
+                   || ch.getElementsByTagName("itunes:image")[0];
+        const cover = imgEl ? imgEl.getAttribute("href") : "";
+        $("ch-title").textContent = chTitle;
+        $("ch-desc").textContent = chDesc;
+        if (cover) { $("cover").src = cover; $("p-cover").src = cover; }
+
+        const items = Array.from(doc.getElementsByTagName("item"));
+        const list = $("list");
+        list.innerHTML = "";
+        if (!items.length) { list.innerHTML = '<div class="loading">暂无可播放的节目</div>'; return; }
+
+        items.forEach((it) => {
+          const title = (it.querySelector("title") || {}).textContent || "未命名节目";
+          const pub = (it.querySelector("pubDate") || {}).textContent || "";
+          const enc = it.getElementsByTagName("enclosure")[0];
+          const url = enc ? enc.getAttribute("url") : "";
+          let dateStr = pub;
+          try { dateStr = new Date(pub).toLocaleDateString("zh-CN"); } catch (e) {}
+          const el = document.createElement("div");
+          el.className = "ep";
+          el.innerHTML = `
+            <div class="play-ico"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+            <div class="meta">
+              <p class="ep-title">${title}</p>
+              <span class="ep-date">${dateStr}</span>
+            </div>`;
+          el.onclick = () => play(url, title, el);
+          list.appendChild(el);
+        });
+      } catch (e) {
+        $("list").innerHTML = '<div class="loading">加载失败，请稍后刷新重试</div>';
+        console.error(e);
+      }
+    }
+
+    function play(url, title, el) {
+      if (!url) return;
+      document.querySelectorAll(".ep").forEach((x) => x.classList.remove("active"));
+      if (el) el.classList.add("active");
+      $("p-title").textContent = title;
+      $("player").classList.add("show");
+      if (current !== url) {
+        audio.src = url;
+        current = url;
+      }
+      audio.play().catch((e) => console.warn("播放失败:", e));
+    }
+
+    function toggle() {
+      if (!audio.src) return;
+      if (audio.paused) audio.play().catch(() => {});
+      else audio.pause();
+    }
+
+    $("p-btn").onclick = toggle;
+    audio.onplay = () => { $("p-icon").innerHTML = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>'; };
+    audio.onpause = () => { $("p-icon").innerHTML = '<path d="M8 5v14l11-7z"/>'; };
+    audio.ontimeupdate = () => {
+      const p = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+      $("p-prog").style.width = p + "%";
+      $("p-cur").textContent = fmt(audio.currentTime);
+    };
+    audio.onloadedmetadata = () => { $("p-dur").textContent = fmt(audio.duration); };
+
+    const speeds = [1, 1.25, 1.5, 0.75];
+    let si = 0;
+    $("spd").onclick = () => {
+      si = (si + 1) % speeds.length;
+      audio.playbackRate = speeds[si];
+      $("spd").textContent = speeds[si] + "x";
+    };
+
+    load();
+  </script>
+</body>
+</html>
