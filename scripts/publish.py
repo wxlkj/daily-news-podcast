@@ -47,9 +47,9 @@ else:
 
 # 1) 上传 MP3 到 Release（如当天已存在则先删除，支持手动重跑）
 asset_url = f"https://github.com/{REPO}/releases/download/{TAG}/episode_final.mp3"
-# 先尝试删除当天已存在的 release（重跑场景），不存在则忽略
+# 先尝试删除当天已存在的 release 及其 tag（重跑场景），不存在则忽略
 delp = subprocess.run(
-    ["gh", "release", "delete", TAG, "-y"],
+    ["gh", "release", "delete", TAG, "-y", "--cleanup-tag"],
     capture_output=True, text=True,
 )
 if delp.returncode != 0:
