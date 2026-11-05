@@ -24,11 +24,15 @@ CATS = {
     "sports": ("prompt_sports.md", "体育"),
 }
 
-# 字数约束：实测中文 TTS 约 4.2 字/秒 → 10 分钟≈2520 字。
-# 设置硬性下限，过短则重试展开，确保最终时长≥10 分钟。
-HARD_MIN = 3600      # 低于此值强制重试
-WARN_LOW = 3400      # 低于此值仍警告（重试后若仍偏短）
-WARN_HIGH = 5500     # 高于此值警告可能超 20 分钟
+# 字数约束：实测中文 TTS 约 4.2–4.8 字/秒 → 10 分钟≈2520–2880 字。
+# 硬性下限随当天条数自适应：条数少则下调（避免强行注水编造），条数多则保底 3600 字（≈13 分钟）。
+WARN_LOW = 3000      # 低于此值警告可能不足 10 分钟
+WARN_HIGH = 5200     # 高于此值警告可能超过 20 分钟
+
+
+def hard_min(n_items):
+    """根据当天条数计算字数硬下限：至少 3000 字（≈10 分钟），至多 3600 字。"""
+    return min(3600, max(3000, n_items * 400))
 
 
 def generate(prompt_template, items, label, extra=""):
@@ -73,6 +77,7 @@ def main():
             continue
         print(f"→ 生成 {label}（{len(items)} 条候选）…")
         prompt_template = open(prompt_file, encoding="utf-8").read()
+        HARD_MIN = hard_min(len(items))
 
         script = generate(prompt_template, items, label)
 
@@ -83,7 +88,7 @@ def main():
                 extra = (
                     f"（重要）你刚才生成的文稿只有约 {len(script)} 字，"
                     f"远未达到「不少于 {HARD_MIN} 字、时长 10 分钟以上」的硬性要求。"
-                    f"请重新生成：①务必覆盖提供的全部条目（15–25 条），不要只复述标题或摘要原话；"
+                    f"请重新生成：①务必覆盖提供的全部条目（当前共 {len(items)} 条），不要只复述标题或摘要原话；"
                     f"②把每条的关键事实（时间、地点、涉及方、数字、背景）用完整口语充分展开说清楚；"
                     f"③确保全文达到至少 {HARD_MIN} 字。"
                 )
