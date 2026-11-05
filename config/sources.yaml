@@ -16,6 +16,8 @@
 hours: 24
 
 # ── 国际新闻（早上 06:00 发布）──
+# 以中新网国际为可靠基线，叠加多个境外 RSS 形成冗余：任一源在 runner 上偶发不可达时，
+# 其余源仍能保证 24 小时池足够大、撑满 10–20 分钟。所有源均按 <pubDate> 精确过滤。
 international:
   rss:
     - name: 中国新闻网国际
@@ -28,6 +30,12 @@ international:
       url: https://feeds.reuters.com/reuters/worldNews
     - name: AP News
       url: https://apnews.com/index.rss
+    - name: 联合早报实时中国
+      url: https://www.zaobao.com/realtime/china/rss.xml
+    - name: 联合早报实时国际
+      url: https://www.zaobao.com/realtime/world/rss.xml
+    - name: 法国国际广播RFI中文
+      url: https://www.rfi.fr/cn/rss
 
 # ── 国内时政·军事（晚上 20:00 发布）──
 # RSS 骨架：中新网国内/社会/财经；网页补充：央视新闻首页与军事频道（军事关键词优先）。
