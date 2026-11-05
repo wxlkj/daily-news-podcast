@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>每日时政简报</title>
+  <title>每日新闻简报</title>
   <meta name="theme-color" content="#0f1a2e" />
   <style>
     :root {
@@ -34,7 +34,17 @@
     }
     .title { font-size: 21px; font-weight: 700; margin: 0 0 6px; }
     .desc { font-size: 13px; color: var(--sub); line-height: 1.5; margin: 0; }
-    h2.section { font-size: 14px; color: var(--sub); font-weight: 600; margin: 8px 2px 12px; letter-spacing: .5px; }
+    h2.section { font-size: 14px; color: var(--sub); font-weight: 600; margin: 8px 2px 10px; letter-spacing: .5px; }
+    /* 类目筛选标签 */
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 2px 14px; }
+    .chip {
+      padding: 6px 14px; border-radius: 999px; font-size: 13px;
+      border: 1px solid var(--line); background: var(--card); color: var(--sub);
+      cursor: pointer; user-select: none; transition: background .15s, color .15s;
+    }
+    .chip:active { transform: scale(.96); }
+    .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    /* 节目卡片 */
     .ep {
       background: var(--card); border: 1px solid var(--line);
       border-radius: 14px; padding: 14px 15px; margin-bottom: 12px;
@@ -49,8 +59,12 @@
     }
     .ep .play-ico svg { width: 18px; height: 18px; fill: #fff; }
     .ep .meta { min-width: 0; flex: 1; }
-    .ep .ep-title { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+    .ep .ep-title { font-size: 15px; font-weight: 600; margin: 0 0 5px; }
     .ep .ep-date { font-size: 12px; color: var(--sub); }
+    .badge {
+      display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 6px;
+      color: #fff; margin-right: 6px; vertical-align: middle;
+    }
     .loading { text-align: center; color: var(--sub); padding: 40px 0; font-size: 14px; }
     /* 底部播放条 */
     .player {
@@ -91,11 +105,12 @@
     <header>
       <img class="cover" id="cover" alt="封面" />
       <div>
-        <h1 class="title" id="ch-title">每日时政简报</h1>
+        <h1 class="title" id="ch-title">每日新闻简报</h1>
         <p class="desc" id="ch-desc">加载中…</p>
       </div>
     </header>
     <h2 class="section">节目列表</h2>
+    <div class="filters" id="filters"></div>
     <div id="list"><div class="loading">正在加载最新节目…</div></div>
   </div>
 
@@ -126,7 +141,116 @@
     const handle = $("p-handle");
     let current = null;
     let dragging = false;
+    let episodes = [];
+    let filter = "all";
 
+    // 类目 key -> 展示信息（与 feed.xml 的 <category> 对应）
+    const CATS = {
+      international:      { label: "国际",     color: "#4c8dff" },
+      politics_mil:       { label: "时政军事", color: "#ff7a7a" },
+      culture_edu_health: { label: "文教卫",   color: "#57c98a" },
+      sports:             { label: "体育",     color: "#e6a23c" },
+      legacy:             { label: "往期",     color: "#8a9bbd" },
+    };
+    const FILTERS = [
+      { key: "all",                 label: "全部" },
+      { key: "international",       label: "国际" },
+      { key: "politics_mil",        label: "时政军事" },
+      { key: "culture_edu_health",  label: "文教卫" },
+      { key: "sports",              label: "体育" },
+    ];
+
+    function esc(s) {
+      return (s || "").replace(/[&<>"]/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    }
+    function parseDate(s) {
+      if (!s) return null;
+      let d = new Date(s);
+      if (isNaN(d.getTime())) d = new Date(s.replace(/\s(\+\d{2})(\d{2})$/, " $1:$2"));
+      return isNaN(d.getTime()) ? null : d;
+    }
+    function fmtDate(s) {
+      const d = parseDate(s);
+      if (!d) return s;
+      return (d.getMonth() + 1) + "月" + d.getDate() + "日 " +
+             String(d.getHours()).padStart(2, "0") + ":" +
+             String(d.getMinutes()).padStart(2, "0");
+    }
+
+    function renderFilters() {
+      const box = $("filters");
+      box.innerHTML = "";
+      FILTERS.forEach((f) => {
+        const el = document.createElement("div");
+        el.className = "chip" + (f.key === filter ? " on" : "");
+        el.textContent = f.label;
+        el.onclick = () => { filter = f.key; renderFilters(); renderList(); };
+        box.appendChild(el);
+      });
+    }
+
+    function renderList() {
+      const list = $("list");
+      list.innerHTML = "";
+      const shown = episodes.filter((e) => filter === "all" || e.cat === filter);
+      if (!shown.length) {
+        list.innerHTML = '<div class="loading">该分类暂无节目</div>';
+        return;
+      }
+      shown.forEach((e) => {
+        const c = CATS[e.cat] || CATS.legacy;
+        const mins = e.length ? Math.round(e.length * 8 / 64000 / 60) : 0;
+        const dur = mins ? " · 约" + mins + "分钟" : "";
+        const el = document.createElement("div");
+        el.className = "ep" + (e.url === current ? " active" : "");
+        el.innerHTML = `
+          <div class="play-ico"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+          <div class="meta">
+            <p class="ep-title">${esc(e.title)}</p>
+            <span class="ep-date"><span class="badge" style="background:${c.color}">${c.label}</span>${fmtDate(e.pub)}${dur}</span>
+          </div>`;
+        el.onclick = () => play(e.url, e.title, el);
+        list.appendChild(el);
+      });
+    }
+
+    async function load() {
+      try {
+        const res = await fetch("feed.xml", { cache: "no-cache" });
+        const text = await res.text();
+        const doc = new DOMParser().parseFromString(text, "text/xml");
+        const ch = doc.querySelector("channel");
+        const chTitle = (ch.querySelector("title") || {}).textContent || "每日新闻简报";
+        const chDesc = (ch.querySelector("description") || {}).textContent || "";
+        const imgEl = ch.getElementsByTagNameNS(ITUNES, "image")[0]
+                   || ch.getElementsByTagName("itunes:image")[0];
+        const cover = imgEl ? imgEl.getAttribute("href") : "";
+        $("ch-title").textContent = chTitle;
+        $("ch-desc").textContent = chDesc;
+        if (cover) { $("cover").src = cover; $("p-cover").src = cover; }
+
+        episodes = Array.from(doc.getElementsByTagName("item")).map((it) => {
+          const title = (it.querySelector("title") || {}).textContent || "未命名节目";
+          const pub = (it.querySelector("pubDate") || {}).textContent || "";
+          const enc = it.getElementsByTagName("enclosure")[0];
+          const url = enc ? enc.getAttribute("url") : "";
+          const length = enc ? parseInt(enc.getAttribute("length") || "0", 10) : 0;
+          const catRaw = (it.querySelector("category") || {}).textContent || "";
+          const cat = CATS[catRaw] ? catRaw : "legacy";
+          const d = parseDate(pub);
+          return { title, pub, url, length, cat, ts: d ? d.getTime() : 0 };
+        }).sort((a, b) => b.ts - a.ts);
+
+        renderFilters();
+        renderList();
+      } catch (e) {
+        $("list").innerHTML = '<div class="loading">加载失败，请稍后刷新重试</div>';
+        console.error(e);
+      }
+    }
+
+    /* ---------- 播放控制（含可拖动进度条） ---------- */
     function updateProgress(p) {
       p = Math.max(0, Math.min(100, p));
       $("p-prog").style.width = p + "%";
@@ -134,8 +258,7 @@
     }
     function posToRatio(clientX) {
       const rect = bar.getBoundingClientRect();
-      let r = (clientX - rect.left) / rect.width;
-      return Math.max(0, Math.min(1, r));
+      return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     }
     function dragStart(e) {
       if (!audio.duration || isNaN(audio.duration)) return;
@@ -167,52 +290,7 @@
     function fmt(s) {
       if (!s || isNaN(s)) return "0:00";
       s = Math.floor(s);
-      const m = Math.floor(s / 60), ss = s % 60;
-      return m + ":" + String(ss).padStart(2, "0");
-    }
-
-    async function load() {
-      try {
-        const res = await fetch("feed.xml", { cache: "no-cache" });
-        const text = await res.text();
-        const doc = new DOMParser().parseFromString(text, "text/xml");
-        const ch = doc.querySelector("channel");
-        const chTitle = (ch.querySelector("title") || {}).textContent || "每日时政简报";
-        const chDesc = (ch.querySelector("description") || {}).textContent || "";
-        const imgEl = ch.getElementsByTagNameNS(ITUNES, "image")[0]
-                   || ch.getElementsByTagName("itunes:image")[0];
-        const cover = imgEl ? imgEl.getAttribute("href") : "";
-        $("ch-title").textContent = chTitle;
-        $("ch-desc").textContent = chDesc;
-        if (cover) { $("cover").src = cover; $("p-cover").src = cover; }
-
-        const items = Array.from(doc.getElementsByTagName("item"));
-        const list = $("list");
-        list.innerHTML = "";
-        if (!items.length) { list.innerHTML = '<div class="loading">暂无可播放的节目</div>'; return; }
-
-        items.forEach((it) => {
-          const title = (it.querySelector("title") || {}).textContent || "未命名节目";
-          const pub = (it.querySelector("pubDate") || {}).textContent || "";
-          const enc = it.getElementsByTagName("enclosure")[0];
-          const url = enc ? enc.getAttribute("url") : "";
-          let dateStr = pub;
-          try { dateStr = new Date(pub).toLocaleDateString("zh-CN"); } catch (e) {}
-          const el = document.createElement("div");
-          el.className = "ep";
-          el.innerHTML = `
-            <div class="play-ico"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
-            <div class="meta">
-              <p class="ep-title">${title}</p>
-              <span class="ep-date">${dateStr}</span>
-            </div>`;
-          el.onclick = () => play(url, title, el);
-          list.appendChild(el);
-        });
-      } catch (e) {
-        $("list").innerHTML = '<div class="loading">加载失败，请稍后刷新重试</div>';
-        console.error(e);
-      }
+      return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
     }
 
     function play(url, title, el) {
@@ -246,8 +324,7 @@
     audio.onpause = () => { $("p-icon").innerHTML = '<path d="M8 5v14l11-7z"/>'; };
     audio.ontimeupdate = () => {
       if (dragging) return;
-      const p = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
-      updateProgress(p);
+      updateProgress(audio.duration ? (audio.currentTime / audio.duration) * 100 : 0);
       $("p-cur").textContent = fmt(audio.currentTime);
     };
     audio.onloadedmetadata = () => { $("p-dur").textContent = fmt(audio.duration); };
