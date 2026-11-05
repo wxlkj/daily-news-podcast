@@ -212,24 +212,24 @@ result = {"international": [], "politics_mil": [], "culture_edu_health": [], "sp
 if EDITION in ("morning", "all"):
     # 境外 RSS（BBC/DW/Reuters/AP，线上 runner 可抓）+ 境内国际 RSS（国内可访问，兜底）
     intl_urls = [s["url"] for s in SOURCES.get("international", [])] + INTL_RSS
-    result["international"] = top_n(fetch_rss(intl_urls), n=15)
+    result["international"] = top_n(fetch_rss(intl_urls), n=25)
 
 if EDITION in ("evening", "all"):
     # 国内时政·军事：央视时政/社会/军事网页 + 国内 RSS 补充，军事优先
-    pm_web = fetch_domestic(POLITICS_MIL_URLS, limit=15)
-    pm_rss = fetch_rss_domestic(DOMESTIC_RSS, per=15)
-    result["politics_mil"] = merge_dedup(pm_web + pm_rss, n=15)
+    pm_web = fetch_domestic(POLITICS_MIL_URLS, limit=20)
+    pm_rss = fetch_rss_domestic(DOMESTIC_RSS, per=20)
+    result["politics_mil"] = merge_dedup(pm_web + pm_rss, n=20)
 
     # 文教卫：以人民网/中新网 RSS（含真实摘要）为主，央视文化/教育/健康垂直频道网页作补充。
     # RSS 前置以保证带摘要的条目优先入选（央视垂直频道网页条目多为空摘要，难撑满时长）。
     edu_rss = fetch_rss_domestic(EDU_RSS, per=20)
     edu_web = fetch_domestic(EDU_URLS, limit=15)
-    result["culture_edu_health"] = merge_dedup(edu_rss + edu_web, n=15)
+    result["culture_edu_health"] = merge_dedup(edu_rss + edu_web, n=20)
 
     # 体育：央视体育频道 + 人民网/中新网体育 RSS（网页条数偏少，RSS 补足以保证时长）
     sp_web = fetch_domestic(SPORTS_URLS, limit=15)
-    sp_rss = fetch_rss_domestic(SPORTS_RSS, per=15)
-    result["sports"] = merge_dedup(sp_web + sp_rss, n=15)
+    sp_rss = fetch_rss_domestic(SPORTS_RSS, per=20)
+    result["sports"] = merge_dedup(sp_web + sp_rss, n=20)
 
 with open("news.json", "w", encoding="utf-8") as f:
     json.dump(result, f, ensure_ascii=False, indent=2)
