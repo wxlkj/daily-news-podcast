@@ -1,28 +1,52 @@
-# 每日时政语音简报（自动播客）
+# 每日新闻语音简报（自动播客）
 
-每天凌晨自动生成一集「国内外时政」语音简报（约 10–12 分钟），国内 5 条 + 国际 5 条，
-含权威/官方网站评论引用，发布为播客 RSS，可在**小宇宙**订阅收听。
+每天自动生成 **4 篇独立语音报道**，直接在手机网页播放器收听，无需订阅任何 App。
+每篇约 **10–20 分钟**，**直接陈述新闻、不加评论**，条数按当天素材自适应。
+
+| 时段（北京时间） | 篇目 | 内容 |
+|---|---|---|
+| 早 06:00 | 国际新闻 | BBC / 德国之声 / Reuters / AP 等国际 RSS |
+| 晚 20:00 | 国内时政·军事 | 央视首页/国内/社会/军事 + 人民网·中新 RSS，军事热点优先 |
+| 晚 20:00 | 文教卫 | 央视文化 / 教育 / 卫生健康频道 |
+| 晚 20:00 | 体育 | 央视体育频道 |
+
+## 收听方式
+
+手机 Chrome 打开 **https://wxlkj.github.io/daily-news-podcast/** ，
+菜单选「添加到主屏幕」，之后点桌面图标即可收听。
+列表上方有「全部 / 国际 / 时政军事 / 文教卫 / 体育」标签可筛选，
+底部播放条支持**拖动进度条**。
+
+> 音频与播放器都托管在 GitHub Pages 同一域名下，国内可直接访问；
+> 不再依赖 Release（其下载域名在国内不可达），也不依赖小宇宙/喜马拉雅。
 
 ## 架构
-GitHub Actions 定时触发 → 抓取 RSS → LLM 润色 → Edge TTS 转语音 →
-上传 GitHub Release + 更新 GitHub Pages 上的 `feed.xml`。
 
-## 部署步骤（一次性的）
-1. 在 GitHub 新建**公开仓库** `daily-news-podcast`。
-2. 开启 **GitHub Pages**：Settings → Pages → Source 选 `main` 分支的 `/docs` 目录。
-3. 配置密钥：Settings → Secrets → Actions → 新建 `LLM_API_KEY`，值为 DeepSeek 的 key。
-4. 把本仓库全部文件推送到 `main` 分支（Actions 的 `GITHUB_TOKEN` 已具备 push 权限）。
-5. 在 Actions 页面点 **Run workflow** 手动触发一次，验证生成成功。
+```
+GitHub Actions（两次定时）
+  ├─ UTC 22:00（北京 06:00）EDITION=morning  → 国际新闻 1 篇
+  └─ UTC 12:00（北京 20:00）EDITION=evening  → 晚间 3 篇
+        抓取 fetch_news.py → 分类目润色 polish.py(DeepSeek) → 逐篇 TTS tts.py(Edge TTS + ffmpeg)
+        → publish.py 把 MP3 放进 docs/audio/ 并更新 docs/feed.xml → git push
+```
 
-## 日常使用
-- 每天 05:30（北京时间）自动出新集。
-- 小宇宙 App → 搜索框 → 输入 `https://wxlkj.github.io/daily-news-podcast/feed.xml` → 订阅。
+四个类目各自独立成稿、独立音频、独立 feed item（`<category>` 区分类目），
+同一天同类目重跑按 `guid={日期}_{类目}` 去重替换，不会误删其它三篇。
+
+## 部署（一次性）
+
+1. 公开仓库 `wxlkj/daily-news-podcast`，开启 **Pages**：`main` 分支 `/docs` 目录。
+2. 配置 Secret：`LLM_API_KEY`（DeepSeek key）。
+3. 推送全部文件；在 Actions 页 **Run workflow** 选 `edition` 手动验证一次。
 
 ## 维护
-- `config/sources.yaml`：RSS 源易失效，请定期实测替换。
-- 想换音色改 `scripts/tts.py` 的 `VOICE`。
-- 旧集按 90 天滚动清理，仓库体积稳定在 ~520MB 内。
+
+- `config/sources.yaml`：国际 RSS 源与国内频道登记，源失效时替换。
+- `scripts/fetch_news.py`：频道 URL、军事关键词、每类候选条数。
+- `prompt_intl.md` / `prompt_politics_mil.md` / `prompt_edu.md` / `prompt_sports.md`：四套播报提示词。
+- `scripts/tts.py` 的 `VOICE` 可换音色。
+- `scripts/publish.py` 的 `KEEP_ITEMS=28`（约最近 7 天）滚动清理旧音频，控制仓库体积。
 
 ## 成本
-GitHub Actions / Pages / Release 均在免费额度内，Edge TTS 免费，LLM 用 DeepSeek 低费模型，
-**整体约 0 元/月**。
+
+GitHub Actions / Pages 免费额度内，Edge TTS 免费，LLM 用 DeepSeek 低费模型，**约 0 元/月**。
