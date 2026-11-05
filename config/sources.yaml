@@ -1,38 +1,48 @@
-# 时政新闻来源配置
-# 重要变更（2026-10-31 实测）：
-#   国内时政 RSS 普遍停用或时间字段不可靠（人民网 politics.xml 时间全为 2025-06-05 假值；
-#   央视/联合早报/中新/澎湃/环球/参考消息 RSS 均不可达）。
-#   →【国内改为网页抓取央视新闻首页】，发布日期从文章 URL 提取（如 /2026/10/31/），精准可靠。
-#     抓取目标 URL 在 scripts/fetch_news.py 中：https://news.cctv.com/
-#   →【国际】仍用下方 RSS（BBC/Reuters/AP/DW）；GitHub Actions 境外 runner 可正常抓取，
-#     本地/沙箱连不上境外属正常（显示 0 条）。
-#   →【评论】可选，暂不强加；找不到合适来源则不加，避免编造。
-# 注意：当前 fetch_news.py 国内抓取硬编码央视首页，下方 domestic 块仅作历史参考，不再被读取。
+# 新闻来源配置（2026-11-04 重构：每天 4 篇分时段分主题）
+#
+# 抓取逻辑见 scripts/fetch_news.py。本文件：
+#   - international 区块：被 fetch_news.py 直接读取（RSS 列表）
+#   - 国内/文教卫/体育：使用央视各垂直频道网页抓取（URL 在 fetch_news.py 常量中），
+#     此处仅作文档化登记，便于后续调整或排查。
 
-domestic:
-  # ⚠️ 历史参考：国内已改为网页抓取央视首页（见上方说明），本块不再被脚本读取
-  - name: 人民网时政(不再使用)
-    url: https://www.people.com.cn/rss/politics.xml
-    status: deprecated
-
+# ── 国际新闻（早上 06:00 发布）──
+# 境外 RSS：线上 runner 可抓；另在 fetch_news.py 的 INTL_RSS 常量中配置
+# 人民网/中新网国际 RSS（境内域名）兜底，不依赖境外网络，两端都能抓到。
 international:
   - name: BBC中文
     url: https://www.bbc.com/zhongwen/simp/index.xml
-    status: actions-verify   # 沙箱不可达，Actions runner 在境外，部署后验证
   - name: 德国之声中文
     url: https://www.dw.com/zh/%E4%B8%AD%E5%9B%BD/rss/s-7293
-    status: actions-verify
   - name: Reuters世界
     url: https://feeds.reuters.com/reuters/worldNews
-    status: actions-verify
   - name: AP News
     url: https://apnews.com/index.rss
-    status: actions-verify
 
-commentary:
-  # 【评论为可选项】若以下源可用，LLM 会适当引用并标注来源；若不可用/无合适内容，则不加评论，仅客观陈述。
-  # 专门评论源（人民网评/新华时评等）多已失效，暂以人民网时政作为可选引用素材。
-  # 找不到合适评论时，宁可不加，绝不编造。
-  - name: 人民网时政(可选引用)
-    url: https://www.people.com.cn/rss/politics.xml
-    status: optional
+# ── 国内时政·军事（晚上 20:00 发布）──
+# 网页抓取：news.cctv.com 首页/国内/社会/军事 + 人民网·中新 RSS 补充。
+# 军事关键词优先入选（见 fetch_news.py 的 MIL_KEYWORDS）。
+domestic_politics_mil_web:
+  - news.cctv.com/
+  - news.cctv.com/china/
+  - news.cctv.com/society/
+  - news.cctv.com/military/
+domestic_rss:
+  - name: 人民网时政
+    url: http://www.people.com.cn/rss/politics.xml
+  - name: 中国新闻网国内
+    url: https://www.chinanews.com.cn/rss/china.xml
+
+# ── 文教卫：文化 / 教育 / 卫生健康（晚上 20:00 发布）──
+# 央视三个垂直频道网页抓取，合并去重；
+# 另由 fetch_news.py 的 EDU_RSS（人民网教育/文化）兜底补足条数。
+education_health_web:
+  - culture.cctv.com/    # 文化
+  - edu.cctv.com/        # 教育
+  - health.cctv.com/     # 卫生健康
+
+# ── 体育（晚上 20:00 发布）──
+# 央视体育频道网页抓取（条数偏少）；
+# 另由 fetch_news.py 的 SPORTS_RSS（人民网/中新网体育）补足，确保素材够 10–20 分钟。
+sports_web:
+  - sports.cctv.com/
+  - sports.cctv.com/football/
