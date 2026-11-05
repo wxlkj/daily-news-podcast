@@ -21,6 +21,7 @@
 import os
 import re
 import json
+import email
 import yaml
 import socket
 import feedparser
@@ -90,10 +91,26 @@ def in_window_web(date_obj):
 
 # ----------------------------- RSS 抓取（带时间过滤）-----------------------------
 def parse_published(entry):
-    pp = entry.get("published_parsed") or entry.get("updated_parsed")
-    if not pp:
-        return None
-    return datetime(*pp[:6], tzinfo=timezone.utc).astimezone(SHANGHAI)
+    """尽力解析条目发布时间：优先用 feedparser 的结构化字段，
+    缺失时回退到字符串日期解析（部分境外源只提供 updated 或字符串）。"""
+    for key in ("published_parsed", "updated_parsed"):
+        pp = entry.get(key)
+        if pp:
+            return datetime(*pp[:6], tzinfo=timezone.utc).astimezone(SHANGHAI)
+    for key in ("published", "updated", "pubDate"):
+        s = entry.get(key)
+        if not s:
+            continue
+        try:
+            dt = email.utils.parsedate_to_datetime(s)
+            if dt is None:
+                continue
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(SHANGHAI)
+        except Exception:
+            continue
+    return None
 
 
 def fetch_rss_feeds(feeds):
@@ -186,7 +203,7 @@ result = {"international": [], "politics_mil": [], "culture_edu_health": [], "sp
 
 if EDITION in ("morning", "all"):
     intl_rss = SOURCES.get("international", {}).get("rss", [])
-    result["international"] = merge_select(fetch_rss_feeds(intl_rss), n=22)
+    result["international"] = merge_select(fetch_rss_feeds(intl_rss), n=25)
 
 if EDITION in ("evening", "all"):
     pm = SOURCES.get("politics_mil", {})
