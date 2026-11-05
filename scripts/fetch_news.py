@@ -61,6 +61,11 @@ INTL_RSS = [
 EDU_RSS = [
     "http://www.people.com.cn/rss/edu.xml",         # 人民网教育
     "http://www.people.com.cn/rss/culture.xml",     # 人民网文化
+    "http://www.people.com.cn/rss/health.xml",      # 人民网卫生健康
+    "https://www.chinanews.com.cn/rss/culture.xml", # 中新网文化
+    "https://www.chinanews.com.cn/rss/edu.xml",     # 中新网教育
+    "https://www.chinanews.com.cn/rss/life.xml",    # 中新网生活
+    "https://www.chinanews.com.cn/rss/health.xml",  # 中新网卫生健康
 ]
 SPORTS_RSS = [
     "http://www.people.com.cn/rss/sports.xml",      # 人民网体育
@@ -215,10 +220,11 @@ if EDITION in ("evening", "all"):
     pm_rss = fetch_rss_domestic(DOMESTIC_RSS, per=15)
     result["politics_mil"] = merge_dedup(pm_web + pm_rss, n=15)
 
-    # 文教卫：文化 + 教育 + 卫生健康 三个垂直频道，人民网教育/文化 RSS 兜底
+    # 文教卫：以人民网/中新网 RSS（含真实摘要）为主，央视文化/教育/健康垂直频道网页作补充。
+    # RSS 前置以保证带摘要的条目优先入选（央视垂直频道网页条目多为空摘要，难撑满时长）。
+    edu_rss = fetch_rss_domestic(EDU_RSS, per=20)
     edu_web = fetch_domestic(EDU_URLS, limit=15)
-    edu_rss = fetch_rss_domestic(EDU_RSS, per=15)
-    result["culture_edu_health"] = merge_dedup(edu_web + edu_rss, n=15)
+    result["culture_edu_health"] = merge_dedup(edu_rss + edu_web, n=15)
 
     # 体育：央视体育频道 + 人民网/中新网体育 RSS（网页条数偏少，RSS 补足以保证时长）
     sp_web = fetch_domestic(SPORTS_URLS, limit=15)
