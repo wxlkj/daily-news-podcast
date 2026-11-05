@@ -1,48 +1,71 @@
-# 新闻来源配置（2026-11-04 重构：每天 4 篇分时段分主题）
+# 新闻来源配置（2026-11-05 重构：只播报过去 24 小时 + 拓宽信源）
 #
-# 抓取逻辑见 scripts/fetch_news.py。本文件：
-#   - international 区块：被 fetch_news.py 直接读取（RSS 列表）
-#   - 国内/文教卫/体育：使用央视各垂直频道网页抓取（URL 在 fetch_news.py 常量中），
-#     此处仅作文档化登记，便于后续调整或排查。
+# 设计要点：
+#  1. 严格时间过滤——只保留「过去 hours 小时」内发布的新闻（见 scripts/fetch_news.py）。
+#  2. 以「中国新闻网(chinanews.com.cn) 多类目 RSS」为骨架：
+#     它的 <pubDate> 时间戳准确（带 +0800 时区），且每条都带真实摘要，
+#     是做 24 小时过滤最可靠的信源。
+#  3. 辅以「央视各频道网页抓取」：按文章 URL 中的日期路径(cctv.com/YYYY/MM/DD/)
+#     做天粒度过滤，补充实时、带军事/体育热点的条目。
+#  4. 国际新闻额外接入境外 RSS（BBC/德国之声/Reuters/AP），线上 runner 可直达；
+#     境内以中新网国际兜底，两端都不依赖单一信源。
+#  5. 已移除人民网：其 RSS 的 <pubDate> 是固定假常量(2025-06-05)，无法做时间过滤，
+#     故不再作为抓取源（信源更广、不局限于人民网）。
+#
+# hours: 只保留过去 N 小时内的新闻（用户要求 24 小时）
+hours: 24
 
 # ── 国际新闻（早上 06:00 发布）──
-# 境外 RSS：线上 runner 可抓；另在 fetch_news.py 的 INTL_RSS 常量中配置
-# 人民网/中新网国际 RSS（境内域名）兜底，不依赖境外网络，两端都能抓到。
 international:
-  - name: BBC中文
-    url: https://www.bbc.com/zhongwen/simp/index.xml
-  - name: 德国之声中文
-    url: https://www.dw.com/zh/%E4%B8%AD%E5%9B%BD/rss/s-7293
-  - name: Reuters世界
-    url: https://feeds.reuters.com/reuters/worldNews
-  - name: AP News
-    url: https://apnews.com/index.rss
+  rss:
+    - name: 中国新闻网国际
+      url: https://www.chinanews.com.cn/rss/world.xml
+    - name: BBC中文
+      url: https://www.bbc.com/zhongwen/simp/index.xml
+    - name: 德国之声中文
+      url: https://www.dw.com/zh/%E4%B8%AD%E5%9B%BD/rss/s-7293
+    - name: Reuters世界
+      url: https://feeds.reuters.com/reuters/worldNews
+    - name: AP News
+      url: https://apnews.com/index.rss
 
 # ── 国内时政·军事（晚上 20:00 发布）──
-# 网页抓取：news.cctv.com 首页/国内/社会/军事 + 人民网·中新 RSS 补充。
-# 军事关键词优先入选（见 fetch_news.py 的 MIL_KEYWORDS）。
-domestic_politics_mil_web:
-  - news.cctv.com/
-  - news.cctv.com/china/
-  - news.cctv.com/society/
-  - news.cctv.com/military/
-domestic_rss:
-  - name: 人民网时政
-    url: http://www.people.com.cn/rss/politics.xml
-  - name: 中国新闻网国内
-    url: https://www.chinanews.com.cn/rss/china.xml
+# RSS 骨架：中新网国内/社会/财经；网页补充：央视新闻首页与军事频道（军事关键词优先）。
+politics_mil:
+  rss:
+    - name: 中国新闻网国内
+      url: https://www.chinanews.com.cn/rss/china.xml
+    - name: 中国新闻网社会
+      url: https://www.chinanews.com.cn/rss/society.xml
+    - name: 中国新闻网财经
+      url: https://www.chinanews.com.cn/rss/finance.xml
+  web:
+    - name: 央视新闻首页
+      url: https://news.cctv.com/
+    - name: 央视军事频道
+      url: https://news.cctv.com/military/
 
-# ── 文教卫：文化 / 教育 / 卫生健康（晚上 20:00 发布）──
-# 央视三个垂直频道网页抓取，合并去重；
-# 另由 fetch_news.py 的 EDU_RSS（人民网教育/文化）兜底补足条数。
-education_health_web:
-  - culture.cctv.com/    # 文化
-  - edu.cctv.com/        # 教育
-  - health.cctv.com/     # 卫生健康
+# ── 文教卫：文化 / 教育 / 卫生健康 / 生活（晚上 20:00 发布）──
+# 以中新网四个垂直 RSS 为骨架（时间戳准确、带摘要），不再依赖人民网。
+culture_edu_health:
+  rss:
+    - name: 中国新闻网文化
+      url: https://www.chinanews.com.cn/rss/culture.xml
+    - name: 中国新闻网教育
+      url: https://www.chinanews.com.cn/rss/edu.xml
+    - name: 中国新闻网生活
+      url: https://www.chinanews.com.cn/rss/life.xml
+    - name: 中国新闻网健康
+      url: https://www.chinanews.com.cn/rss/health.xml
 
 # ── 体育（晚上 20:00 发布）──
-# 央视体育频道网页抓取（条数偏少）；
-# 另由 fetch_news.py 的 SPORTS_RSS（人民网/中新网体育）补足，确保素材够 10–20 分钟。
-sports_web:
-  - sports.cctv.com/
-  - sports.cctv.com/football/
+# RSS 骨架：中新网体育；网页补充：央视体育频道（实时赛况，按 URL 日期过滤）。
+sports:
+  rss:
+    - name: 中国新闻网体育
+      url: https://www.chinanews.com.cn/rss/sports.xml
+  web:
+    - name: 央视体育
+      url: https://sports.cctv.com/
+    - name: 央视体育足球
+      url: https://sports.cctv.com/football/
