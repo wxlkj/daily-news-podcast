@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""抓取国内外时政新闻。
+"""抓取分类新闻，按 EDITION 环境变量决定抓取哪些类目。
 
-国内：网页抓取央视新闻多个频道页（国内 RSS 时间字段不可靠/已停用，改用网页抓取，
-      发布日期从文章 URL 中提取，如 news.cctv.com/2026/10/31/...shtml）。
-      同一篇新闻在页面上有标题(短链接)与摘要(长链接)指向同一 URL，
-      按 URL 聚合并取最短文本作标题、最长文本作摘要。
-      多频道合并、跨页按 URL 去重，优先选取「带摘要」的条目——
-      这样交给 LLM 的是真实素材，避免其仅凭标题编造细节（满足"客观真实"要求）。
-国际：RSS 聚合（GitHub Actions 境外 runner 可正常抓取 BBC/Reuters/AP/DW；
-      本地/沙箱若连不上境外则为 0 条，属正常）。
-评论：可选，暂不强加（找不到合适来源则不加，避免编造）。
+  - morning : 仅国际新闻（供早上 06:00 发布）
+  - evening : 国内时政·军事 + 文教卫 + 体育（供晚上 20:00 发布）
+  - all     : 抓取全部四类（调试用，默认 evening）
+
+国内（时政军事 / 文教卫 / 体育）：央视各垂直频道网页抓取，发布日期从文章 URL 提取
+  （如 culture.cctv.com/2026/11/04/...shtml）。同一新闻在页面上有标题(短)与摘要(长)
+  指向同一 URL，按 URL 聚合并取最短文本作标题、最长文本作摘要，确保交给 LLM 的
+  是真实素材，避免其凭标题编造细节（满足"客观真实"要求）。
+  RSS 仅作补充（人民网/中新），其 pubDate 不可靠故不依赖。
+文教卫：合并 文化(culture) / 教育(edu) / 卫生健康(health) 三个央视垂直频道。
+国际：境外 RSS（BBC/Reuters/AP/DW，线上 runner 可抓）+ 境内 RSS（人民网/中新网国际，
+  国内域名不依赖境外网络）。
+各类目均配「境内 RSS 兜底」，保证候选条数充足，使每篇文稿能撑满 10–20 分钟而不必编造。
 """
+import os
 import re
 import json
 import yaml
@@ -26,12 +31,40 @@ socket.setdefaulttimeout(10)
 SOURCES = yaml.safe_load(open("config/sources.yaml"))
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-# 国内抓取的央视频道页（按重要性排序；均为真实要闻，含带日期 URL 的新闻）
-DOMESTIC_URLS = [
+# ---- 频道 URL（均为真实要闻页，链接含 cctv.com/YYYY/MM/DD/ 日期路径，供 parse_page 解析）----
+POLITICS_MIL_URLS = [
     "https://news.cctv.com/",          # 首页头条
     "https://news.cctv.com/china/",    # 国内
     "https://news.cctv.com/society/",  # 社会（补充来源）
-    "https://news.cctv.com/military/", # 军事（保证热点军事新闻覆盖）
+    "https://news.cctv.com/military/",  # 军事（保证热点军事新闻覆盖）
+]
+# 文教卫：文化 / 教育 / 卫生健康 三个央视垂直频道
+EDU_URLS = [
+    "https://culture.cctv.com/",
+    "https://edu.cctv.com/",
+    "https://health.cctv.com/",
+]
+SPORTS_URLS = [
+    "https://sports.cctv.com/",
+    "https://sports.cctv.com/football/",
+]
+# 国内 RSS 补充（标题/摘要真实；pubDate 不可靠故不依赖）
+DOMESTIC_RSS = [
+    "http://www.people.com.cn/rss/politics.xml",   # 人民网时政
+    "https://www.chinanews.com.cn/rss/china.xml",  # 中国新闻网国内
+]
+# 境内补充 RSS：国内域名、不依赖境外网络，保证各类目候选充足（朗读 10–20 分钟需要足量素材）
+INTL_RSS = [
+    "http://www.people.com.cn/rss/world.xml",       # 人民网国际
+    "https://www.chinanews.com.cn/rss/world.xml",   # 中新网国际
+]
+EDU_RSS = [
+    "http://www.people.com.cn/rss/edu.xml",         # 人民网教育
+    "http://www.people.com.cn/rss/culture.xml",     # 人民网文化
+]
+SPORTS_RSS = [
+    "http://www.people.com.cn/rss/sports.xml",      # 人民网体育
+    "https://www.chinanews.com.cn/rss/sports.xml",  # 中新网体育
 ]
 
 # 军事/国防相关关键词：命中则视为"军事新闻"，在排序中优先入选
@@ -49,15 +82,6 @@ def is_military(item):
     return any(k in t for k in MIL_KEYWORDS)
 
 
-# 国内补充 RSS 源（央视网页抓取条数有限，用 RSS 补足到 10 条）。
-# 注意：人民网等 RSS 的 pubDate 不可靠，这里仅取标题/摘要作为真实素材，
-# 按 feed 顺序（最新在前）取前 N 条，不依赖其时间字段。
-DOMESTIC_RSS = [
-    "http://www.people.com.cn/rss/politics.xml",   # 人民网时政
-    "https://www.chinanews.com.cn/rss/china.xml",  # 中国新闻网国内
-]
-
-
 def clean(text):
     return re.sub(r"\s+", " ", text or "").strip()
 
@@ -69,7 +93,6 @@ def parse_page(url):
         r = requests.get(url, headers=UA, timeout=20)
         r.encoding = r.apparent_encoding
         soup = BeautifulSoup(r.text, "html.parser")
-        # 先按 URL 聚合同一新闻的所有文本片段
         groups = {}
         for a in soup.find_all("a", href=True):
             href = a["href"]
@@ -84,7 +107,6 @@ def parse_page(url):
             g = groups.setdefault(href, {"y": int(m.group(1)), "mo": int(m.group(2)),
                                          "d": int(m.group(3)), "texts": []})
             g["texts"].append(t)
-        # 聚合后构造条目：最短文本=标题，最长文本=摘要
         for href, g in groups.items():
             texts = [t for t in g["texts"] if 4 <= len(t) <= 300]
             if not texts:
@@ -111,7 +133,6 @@ def fetch_domestic(urls, limit=10):
                 it["rank"] = rank
                 merged[it["url"]] = it
     items = list(merged.values())
-    # 排序：军事优先，其次带摘要优先，其次按源重要性(rank)
     items.sort(key=lambda x: (not is_military(x), x["summary"] == "", x.get("rank", 9)))
     return items[:limit]
 
@@ -179,22 +200,40 @@ def top_n(items, n=10):
     return out
 
 
-# 国内：央视网页抓取（真实日期）+ 国内 RSS 补充，合并去重取前 15 条候选
-# （候选放宽，最终条数由润色阶段根据当天新闻量与 10–20 分钟时长要求决定）
-domestic_web = fetch_domestic(DOMESTIC_URLS, limit=15)
-domestic_rss = fetch_rss_domestic(DOMESTIC_RSS, per=15)
-domestic = merge_dedup(domestic_web + domestic_rss, n=15)
-# 国际：RSS 聚合（真机在境外 runner 上验证），取前 15 条候选
-international = top_n(fetch_rss([s["url"] for s in SOURCES.get("international", [])]), n=15)
+# ============================ 按 EDITION 抓取 ============================
+EDITION = os.environ.get("EDITION", "evening").lower()
+result = {"international": [], "politics_mil": [], "culture_edu_health": [], "sports": []}
 
-result = {"domestic": domestic, "international": international, "commentary": []}
+if EDITION in ("morning", "all"):
+    # 境外 RSS（BBC/DW/Reuters/AP，线上 runner 可抓）+ 境内国际 RSS（国内可访问，兜底）
+    intl_urls = [s["url"] for s in SOURCES.get("international", [])] + INTL_RSS
+    result["international"] = top_n(fetch_rss(intl_urls), n=15)
+
+if EDITION in ("evening", "all"):
+    # 国内时政·军事：央视时政/社会/军事网页 + 国内 RSS 补充，军事优先
+    pm_web = fetch_domestic(POLITICS_MIL_URLS, limit=15)
+    pm_rss = fetch_rss_domestic(DOMESTIC_RSS, per=15)
+    result["politics_mil"] = merge_dedup(pm_web + pm_rss, n=15)
+
+    # 文教卫：文化 + 教育 + 卫生健康 三个垂直频道，人民网教育/文化 RSS 兜底
+    edu_web = fetch_domestic(EDU_URLS, limit=15)
+    edu_rss = fetch_rss_domestic(EDU_RSS, per=15)
+    result["culture_edu_health"] = merge_dedup(edu_web + edu_rss, n=15)
+
+    # 体育：央视体育频道 + 人民网/中新网体育 RSS（网页条数偏少，RSS 补足以保证时长）
+    sp_web = fetch_domestic(SPORTS_URLS, limit=15)
+    sp_rss = fetch_rss_domestic(SPORTS_RSS, per=15)
+    result["sports"] = merge_dedup(sp_web + sp_rss, n=15)
+
 with open("news.json", "w", encoding="utf-8") as f:
     json.dump(result, f, ensure_ascii=False, indent=2)
 
-print(f"国内 {len(domestic)} 条（网页 {len(domestic_web)} + RSS {len(domestic_rss)}）"
-      f" / 国际 {len(international)} 条"
-      f"（国内带摘要 {sum(1 for x in domestic if x['summary'])} 条，军事 {sum(1 for x in domestic if is_military(x))} 条）")
-for i, it in enumerate(domestic, 1):
-    print(f"  国内{i}: {it['title']}  ({it['published'][:10]})")
-for i, it in enumerate(international, 1):
-    print(f"  国际{i}: {it['title']}  ({it['published'][:10]})")
+print(f"EDITION={EDITION}")
+for cat in ("international", "politics_mil", "culture_edu_health", "sports"):
+    items = result[cat]
+    n_sum = sum(1 for x in items if x.get("summary"))
+    n_mil = sum(1 for x in items if is_military(x))
+    print(f"  [{cat}] {len(items)} 条（带摘要 {n_sum}，军事 {n_mil}）")
+    for i, it in enumerate(items[:8], 1):
+        extra = " ★军事" if is_military(it) else ""
+        print(f"    {i}. {it['title']}{extra}")
