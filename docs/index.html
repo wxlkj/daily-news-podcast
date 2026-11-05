@@ -61,6 +61,21 @@
     .ep .meta { min-width: 0; flex: 1; }
     .ep .ep-title { font-size: 15px; font-weight: 600; margin: 0 0 5px; }
     .ep .ep-date { font-size: 12px; color: var(--sub); }
+    /* 下载按钮 */
+    .dl-btn {
+      flex-shrink: 0; width: 40px; height: 40px; border-radius: 10px;
+      border: 1px solid var(--line); background: rgba(76,141,255,.14);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--accent); text-decoration: none;
+    }
+    .dl-btn:active { transform: scale(.94); }
+    .dl-btn svg { width: 19px; height: 19px; fill: none; stroke: currentColor;
+      stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .tip {
+      font-size: 12px; color: var(--sub); line-height: 1.6;
+      background: rgba(76,141,255,.08); border: 1px solid var(--line);
+      border-radius: 10px; padding: 9px 12px; margin: 0 2px 14px;
+    }
     .badge {
       display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 6px;
       color: #fff; margin-right: 6px; vertical-align: middle;
@@ -110,6 +125,7 @@
       </div>
     </header>
     <h2 class="section">节目列表</h2>
+    <p class="tip">点每集右侧的下载按钮，可将音频保存到本机；iOS 会存到「文件」App。也可复制音频链接在电脑浏览器打开后另存。</p>
     <div class="filters" id="filters"></div>
     <div id="list"><div class="loading">正在加载最新节目…</div></div>
   </div>
@@ -204,13 +220,20 @@
         const dur = mins ? " · 约" + mins + "分钟" : "";
         const el = document.createElement("div");
         el.className = "ep" + (e.url === current ? " active" : "");
+        const fname = (e.url.split("/").pop() || "episode.mp3").split("?")[0];
         el.innerHTML = `
           <div class="play-ico"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
           <div class="meta">
             <p class="ep-title">${esc(e.title)}</p>
             <span class="ep-date"><span class="badge" style="background:${c.color}">${c.label}</span>${fmtDate(e.pub)}${dur}</span>
-          </div>`;
+          </div>
+          <a class="dl-btn" href="${esc(e.url)}" download="${esc(fname)}"
+             title="下载本集音频" aria-label="下载本集音频">
+            <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 17v2a2 2 0 002 2h10a2 2 0 002-2v-2"/></svg>
+          </a>`;
         el.onclick = () => play(e.url, e.title, el);
+        // 下载按钮：只触发下载，不冒泡触发播放
+        el.querySelector(".dl-btn").addEventListener("click", (ev) => ev.stopPropagation());
         list.appendChild(el);
       });
     }
