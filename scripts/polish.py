@@ -81,16 +81,18 @@ def main():
 
         script = generate(prompt_template, items, label)
 
-        # 过短则重试：要求覆盖更多条目并展开具体事实
+        # 过短则多次重试：给出按条数折算的硬性字数目标，要求每条铺开具体事实
         if len(script) < HARD_MIN:
-            for r in range(1, 4):
+            per = max(250, HARD_MIN // max(1, len(items)))  # 每条至少应写的字数
+            for r in range(1, 6):
                 print(f"  [展开] {label} 仅 {len(script)} 字(<{HARD_MIN})，第 {r} 次重试扩充…")
                 extra = (
-                    f"（重要）你刚才生成的文稿只有约 {len(script)} 字，"
-                    f"远未达到「不少于 {HARD_MIN} 字、时长 10 分钟以上」的硬性要求。"
-                    f"请重新生成：①务必覆盖提供的全部条目（当前共 {len(items)} 条），不要只复述标题或摘要原话；"
-                    f"②把每条的关键事实（时间、地点、涉及方、数字、背景）用完整口语充分展开说清楚；"
-                    f"③确保全文达到至少 {HARD_MIN} 字。"
+                    f"（非常重要）你刚才的文稿只有约 {len(script)} 字，"
+                    f"远未达到「不少于 {HARD_MIN} 字、朗读 10 分钟以上」的硬性要求，这是绝不允许的。\n"
+                    f"请重新撰写：当前共有 {len(items)} 条新闻，请为【每一条】都写满约 {per}–{per+100} 字、"
+                    f"把该条的时间、地点、涉及方、数字、背景、来龙去脉用完整连贯的口语充分展开，"
+                    f"不要只复述标题或摘要原话，也不要省略任何一条。全文合计必须达到至少 {HARD_MIN} 字。"
+                    f"逐条编号、逐条写满，是确保时长的关键。"
                 )
                 script = generate(prompt_template, items, label, extra=extra)
                 if len(script) >= HARD_MIN:
