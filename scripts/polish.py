@@ -78,7 +78,7 @@ def main():
 
         # 过短则重试：要求覆盖更多条目并展开具体事实
         if len(script) < HARD_MIN:
-            for r in range(1, 3):
+            for r in range(1, 4):
                 print(f"  [展开] {label} 仅 {len(script)} 字(<{HARD_MIN})，第 {r} 次重试扩充…")
                 extra = (
                     f"（重要）你刚才生成的文稿只有约 {len(script)} 字，"
