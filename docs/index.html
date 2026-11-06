@@ -127,10 +127,38 @@
       background: var(--accent); display: flex; align-items: center; justify-content: center;
     }
     .p-btn svg { width: 20px; height: 20px; fill: #fff; }
+    /* 下载落地页（同域名，点一下即下载）*/
+    .dl-panel {
+      display: none;
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 16px; padding: 22px 18px; margin-bottom: 20px;
+      text-align: center;
+    }
+    .dl-panel.show { display: block; }
+    .dl-panel h2 { font-size: 17px; margin: 0 0 6px; }
+    .dl-panel .dl-fn { font-size: 13px; color: var(--sub); word-break: break-all; margin: 0 0 16px; }
+    .dl-go {
+      display: block; width: 100%; max-width: 340px; margin: 0 auto;
+      padding: 15px 20px; border: none; border-radius: 12px;
+      background: var(--accent); color: #fff; font-size: 16px; font-weight: 600;
+      cursor: pointer;
+    }
+    .dl-go:active { transform: scale(.98); }
+    .dl-go:disabled { opacity: .6; }
+    .dl-note { font-size: 12px; color: var(--sub); line-height: 1.6; margin: 14px 0 0; }
+    .dl-alt { font-size: 12px; margin-top: 12px; color: var(--sub); line-height: 1.6; }
+    .dl-alt a { color: var(--accent); word-break: break-all; }
   </style>
 </head>
 <body>
   <div class="wrap">
+    <div class="dl-panel" id="dl-panel">
+      <h2>下载音频到本机</h2>
+      <p class="dl-fn" id="dl-fn"></p>
+      <button class="dl-go" id="dl-go">点此下载音频</button>
+      <p class="dl-note" id="dl-note">点一下上方按钮即开始下载，完成后到通知栏或「文件 / 下载」中查看。</p>
+      <p class="dl-alt" id="dl-alt"></p>
+    </div>
     <header>
       <img class="cover" id="cover" alt="封面" />
       <div>
@@ -139,7 +167,7 @@
       </div>
     </header>
     <h2 class="section">节目列表</h2>
-    <p class="tip">点每集右侧「↓」下载音频（国内 CDN 加速，通常几秒即可存到本机）；点「⧉」复制<strong>强制下载链接</strong>。若在微信 / App 内置浏览器里下载受限，把复制的链接粘贴到<strong>系统浏览器地址栏</strong>打开，会直接下载文件，不会再变成播放或提示失败。</p>
+    <p class="tip">点每集右侧「↓」直接下载（国内 CDN 加速，通常几秒存到本机）。点「⧉」复制<strong>下载页网址</strong>：若在微信 / App 内置浏览器里下载受限，把该网址粘贴到<strong>系统浏览器</strong>打开，点页面上的下载按钮即可保存，不会再提示失败。</p>
     <div class="filters" id="filters"></div>
     <div id="list"><div class="loading">正在加载最新节目…</div></div>
   </div>
@@ -250,11 +278,13 @@
     // ── 下载源 ──
     // github.io 原链没有 Content-Disposition，浏览器打开会「播放」而非下载；
     // jsDelivr CDN 快且允许跨域(CORS)，适合 fetch→Blob 后强制下载；
-    // raw.githubusercontent.com 带 Content-Disposition: attachment，
-    // 复制到系统浏览器打开即直接下载，不会变成播放。
+    // raw.githubusercontent.com 带 attachment 头，作为落地页的备用直链。
     const GH_OWNER = "wxlkj", GH_REPO = "daily-news-podcast";
     function fnameOf(url) {
       return (url || "").split("/").pop().split("?")[0] || "episode.mp3";
+    }
+    function audioUrlOf(fname) {
+      return `https://wxlkj.github.io/daily-news-podcast/audio/${fname}`;
     }
     function cdnSources(url) {
       const f = fnameOf(url);
@@ -266,6 +296,12 @@
     }
     function forceDownloadUrl(url) {
       return `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/main/docs/audio/${fnameOf(url)}`;
+    }
+    // 同域名「下载落地页」网址：能打开本播放器就一定打得开它，
+    // 粘贴到系统浏览器打开后点一下按钮即下载，不依赖外部域名可达性。
+    function dlPageUrl(url) {
+      const base = location.href.split("?")[0].split("#")[0];
+      return base + "?dl=" + encodeURIComponent(fnameOf(url));
     }
 
     async function fetchAudio(url) {
@@ -290,12 +326,27 @@
       throw lastErr || new Error("全部下载源失败");
     }
 
+    // 公共下载动作：fetch→Blob→blob: 链接 <a download> 强制存文件
+    // （blob: 属同源，download 一定生效，不会被当成音频导航播放）
+    async function blobDownload(url, fname) {
+      const blob = await fetchAudio(url);
+      const objUrl = URL.createObjectURL(
+        new Blob([blob], { type: "application/octet-stream" }));
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = fname || fnameOf(url);
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { a.remove(); URL.revokeObjectURL(objUrl); }, 60000);
+    }
+
     async function copyEpisodeLink(url, btn) {
-      // 复制「强制下载链接」：带 attachment 头，粘贴到系统浏览器打开即下载，
-      // 不会再变成播放 /「下载失败」。
-      const ok = await copyText(forceDownloadUrl(url));
+      // 复制「下载页网址」（同域名、一定可达）：粘贴到系统浏览器打开，
+      // 点页面上的下载按钮即可保存，不会再变成播放 /「下载失败」。
+      const ok = await copyText(dlPageUrl(url));
       toast(ok
-        ? "已复制强制下载链接：粘贴到系统浏览器地址栏打开，会直接下载音频文件"
+        ? "已复制下载页网址：粘贴到系统浏览器打开，点页面上的下载按钮即可保存"
         : "复制受限，请点右上角「在浏览器中打开」后再试", 9000);
       if (btn) { btn.disabled = false; }
     }
@@ -303,40 +354,62 @@
     async function downloadEpisode(url, fname, btn) {
       if (!url) return;
       // ① 微信 / App 内置 WebView：下载动作会被拦成「播放音频」而报失败，
-      //    直接复制强制下载链接，引导到系统浏览器打开（打开即下载）。
+      //    直接复制下载页网址，引导到系统浏览器打开后点按钮下载。
       if (isRestrictedBrowser()) {
-        const ok = await copyText(forceDownloadUrl(url));
+        const ok = await copyText(dlPageUrl(url));
         toast(ok
-          ? "此浏览器不支持直接下载，已复制强制下载链接；请粘贴到系统浏览器地址栏打开，会直接下载"
+          ? "此浏览器不支持直接下载，已复制下载页网址；请粘贴到系统浏览器打开，点页面上的下载按钮保存"
           : "请在系统浏览器（Chrome / 一加浏览器）中打开本页再下载", 10000);
         return;
       }
-      // ② 标准浏览器：fetch 成 Blob，再用 blob: 链接配合 <a download> 强制存文件。
-      //    blob: 属同源，download 属性一定生效，不会被当成音频导航播放。
+      // ② 标准浏览器：Blob 强制下载（国内 CDN 加速）
       if (btn) btn.disabled = true;
       toast("正在准备音频，国内加速通常几秒…", 60000);
       try {
-        const blob = await fetchAudio(url);
-        const objUrl = URL.createObjectURL(
-          new Blob([blob], { type: "application/octet-stream" }));
-        const a = document.createElement("a");
-        a.href = objUrl;
-        a.download = fname || fnameOf(url);
-        a.style.display = "none";
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => { a.remove(); URL.revokeObjectURL(objUrl); }, 60000);
+        await blobDownload(url, fname);
         toast("已开始下载，请在通知栏或「文件 / 下载」中查看", 7000);
       } catch (err) {
-        // ③ 极端情况（各源均不可达）：不做任何会导航离开页面的动作，
-        //    只复制强制下载链接，交给系统浏览器打开（打开即下载）。
-        const ok = await copyText(forceDownloadUrl(url));
+        // ③ 极端情况（各源均不可达）：复制下载页网址，交给系统浏览器打开再下载
+        const ok = await copyText(dlPageUrl(url));
         toast(ok
-          ? "网络不可用，已复制强制下载链接；请在网络恢复后粘贴到系统浏览器地址栏打开，会直接下载"
+          ? "网络不可用，已复制下载页网址；请在网络恢复后粘贴到系统浏览器打开再下载"
           : "下载受限，请点右上角「在浏览器中打开」后再点下载", 10000);
       } finally {
         if (btn) btn.disabled = false;
       }
+    }
+
+    // ── 下载落地页：URL 带 ?dl=文件名 时显示一个「点一下就下载」的页面 ──
+    // 场景：受限浏览器里复制了下载页网址 → 粘贴到系统浏览器打开 → 点按钮即下载。
+    function initLanding() {
+      const m = location.search.match(/[?&]dl=([^&#]+)/);
+      if (!m) return false;
+      let fname;
+      try { fname = decodeURIComponent(m[1]); } catch (e) { fname = m[1]; }
+      if (!/^[\w.\-]+\.mp3$/i.test(fname)) return false;  // 仅允许安全文件名
+
+      const url = audioUrlOf(fname);
+      $("dl-panel").classList.add("show");
+      $("dl-fn").textContent = fname;
+      // 备用直链：raw 域名带 attachment 头，打开即下载（若 Blob 路径受阻可用）
+      const alt = forceDownloadUrl(url);
+      $("dl-alt").innerHTML = '若按钮没反应，可<a href="' + esc(alt) +
+        '" target="_blank" rel="noopener">点此用备用直链下载</a>（同样直接保存文件）。';
+
+      const btn = $("dl-go");
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        $("dl-note").textContent = "正在下载，国内加速通常几秒…";
+        try {
+          await blobDownload(url, fname);
+          $("dl-note").textContent = "已开始下载，请到通知栏或「文件 / 下载」中查看。若没反应，请用下方备用直链。";
+        } catch (e) {
+          $("dl-note").textContent = "自动下载失败，请点下方备用直链下载，或换用 Chrome / 一加浏览器打开本页。";
+        } finally {
+          btn.disabled = false;
+        }
+      });
+      return true;
     }
 
     function renderFilters() {
@@ -513,6 +586,11 @@
     audio.onstalled = () => { $("p-status").textContent = "缓冲中…"; };
     audio.onerror = () => { const s = $("p-status"); s.textContent = "音频加载失败，请检查网络后刷新"; s.classList.add("err"); };
 
+    // 若为下载落地页（?dl=），显示下载面板并聚焦；节目列表仍照常加载
+    const isLanding = initLanding();
+    if (isLanding) {
+      try { $("dl-panel").scrollIntoView({ block: "start" }); } catch (e) {}
+    }
     load();
   </script>
 </body>
