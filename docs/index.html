@@ -61,21 +61,35 @@
     .ep .meta { min-width: 0; flex: 1; }
     .ep .ep-title { font-size: 15px; font-weight: 600; margin: 0 0 5px; }
     .ep .ep-date { font-size: 12px; color: var(--sub); }
-    /* 下载按钮 */
+    /* 下载 / 复制 按钮组 */
+    .dl-actions { display: flex; flex-shrink: 0; gap: 6px; align-items: center; }
     .dl-btn {
-      flex-shrink: 0; width: 40px; height: 40px; border-radius: 10px;
+      flex-shrink: 0; width: 38px; height: 38px; border-radius: 10px;
       border: 1px solid var(--line); background: rgba(76,141,255,.14);
       display: flex; align-items: center; justify-content: center;
-      color: var(--accent); text-decoration: none;
+      color: var(--accent); cursor: pointer; padding: 0; font: inherit;
     }
+    .dl-btn.cp-btn { background: rgba(159,178,208,.10); color: var(--sub); }
     .dl-btn:active { transform: scale(.94); }
-    .dl-btn svg { width: 19px; height: 19px; fill: none; stroke: currentColor;
+    .dl-btn:disabled { opacity: .55; }
+    .dl-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor;
       stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    /* 操作提示条 */
     .tip {
       font-size: 12px; color: var(--sub); line-height: 1.6;
       background: rgba(76,141,255,.08); border: 1px solid var(--line);
       border-radius: 10px; padding: 9px 12px; margin: 0 2px 14px;
     }
+    /* 轻量状态提示 */
+    .toast {
+      position: fixed; left: 50%; bottom: 104px; transform: translateX(-50%);
+      background: #0b1729; color: var(--text); border: 1px solid var(--line);
+      border-radius: 10px; padding: 11px 16px; font-size: 13px; line-height: 1.5;
+      max-width: 86%; width: max-content; text-align: center;
+      box-shadow: 0 6px 24px rgba(0,0,0,.5); z-index: 60;
+      opacity: 0; pointer-events: none; transition: opacity .25s;
+    }
+    .toast.show { opacity: 1; }
     .badge {
       display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 6px;
       color: #fff; margin-right: 6px; vertical-align: middle;
@@ -125,10 +139,12 @@
       </div>
     </header>
     <h2 class="section">节目列表</h2>
-    <p class="tip">点每集右侧的下载按钮，可将音频保存到本机；iOS 会存到「文件」App。也可复制音频链接在电脑浏览器打开后另存。</p>
+    <p class="tip">点每集右侧「↓」下载音频（会自动复制到直链作兜底），点「⧉」复制音频直链。在微信或 App 内置浏览器里若下载受限，请点右上角「在浏览器中打开」；或把复制好的直链粘贴到系统浏览器打开后长按另存。</p>
     <div class="filters" id="filters"></div>
     <div id="list"><div class="loading">正在加载最新节目…</div></div>
   </div>
+
+  <div class="toast" id="toast"></div>
 
   <div class="player" id="player">
     <div class="player-inner">
@@ -194,6 +210,77 @@
              String(d.getMinutes()).padStart(2, "0");
     }
 
+    /* ---------- 下载音频：Blob 下载 + 复制链接兜底 ---------- */
+    let toastTimer = null;
+    function toast(msg, ms = 4000) {
+      const t = $("toast");
+      t.textContent = msg;
+      t.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => t.classList.remove("show"), ms);
+    }
+
+    async function copyText(text) {
+      // 优先用现代 API；App 内置 WebView 里常不可用，降级到 execCommand
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (e) { /* 继续降级 */ }
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.cssText = "position:fixed;top:-9999px;opacity:0";
+        document.body.appendChild(ta);
+        ta.focus(); ta.select(); ta.setSelectionRange(0, text.length);
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return ok;
+      } catch (e) { return false; }
+    }
+
+    // 微信 / App 内置 WebView 会把 download 当成"导航播放音频"而报下载失败，
+    // 这类环境干脆不触发下载动作，直接给复制好的直链。
+    function isRestrictedBrowser() {
+      return /MicroMessenger|; wv\)|QQBrowser|Weibo|DingTalk|Alipay|Feishu/i
+        .test(navigator.userAgent || "");
+    }
+
+    async function copyEpisodeLink(url, btn) {
+      const ok = await copyText(url);
+      toast(ok
+        ? "音频直链已复制，粘贴到系统浏览器打开后，长按音频选择「下载 / 另存为」"
+        : "复制受限，请点右上角「在浏览器中打开」后再试", 8000);
+      if (btn) { btn.disabled = false; }
+    }
+
+    async function downloadEpisode(url, fname, btn) {
+      if (!url) return;
+      // ① 无论哪种环境，先把直链备到剪贴板（兜底，静默完成）
+      const copied = await copyText(url);
+      // ② 受限 WebView：不触发会报错的下载动作，直接引导用系统浏览器
+      if (isRestrictedBrowser()) {
+        toast(copied
+          ? "此浏览器不支持直接下载，音频直链已复制；请粘贴到系统浏览器打开后长按「另存为」"
+          : "请在系统浏览器（Chrome / 一加浏览器）中打开本页再下载", 9000);
+        return;
+      }
+      // ③ 标准浏览器：同源 <a download> 触发系统下载管理器，
+      //    不等待全量下载、由下载器负责断点续传，慢网也不会卡页面。
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fname || "episode.mp3";
+      a.rel = "noopener";
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => a.remove(), 3000);
+      toast(copied
+        ? "已开始下载；若无反应，音频直链已复制，可粘贴到系统浏览器打开后另存"
+        : "已开始下载，请在通知栏查看进度", 8000);
+    }
+
     function renderFilters() {
       const box = $("filters");
       box.innerHTML = "";
@@ -227,13 +314,24 @@
             <p class="ep-title">${esc(e.title)}</p>
             <span class="ep-date"><span class="badge" style="background:${c.color}">${c.label}</span>${fmtDate(e.pub)}${dur}</span>
           </div>
-          <a class="dl-btn" href="${esc(e.url)}" download="${esc(fname)}"
-             title="下载本集音频" aria-label="下载本集音频">
-            <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 17v2a2 2 0 002 2h10a2 2 0 002-2v-2"/></svg>
-          </a>`;
+          <div class="dl-actions">
+            <button class="dl-btn" title="下载本集音频" aria-label="下载本集音频">
+              <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 17v2a2 2 0 002 2h10a2 2 0 002-2v-2"/></svg>
+            </button>
+            <button class="dl-btn cp-btn" title="复制音频直链" aria-label="复制音频直链">
+              <svg viewBox="0 0 24 24"><path d="M9 9h10a1 1 0 011 1v10a1 1 0 01-1 1H9a1 1 0 01-1-1V10a1 1 0 011-1zM5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1"/></svg>
+            </button>
+          </div>`;
         el.onclick = () => play(e.url, e.title, el);
-        // 下载按钮：只触发下载，不冒泡触发播放
-        el.querySelector(".dl-btn").addEventListener("click", (ev) => ev.stopPropagation());
+        // 两个按钮都只做各自动作，不冒泡触发播放
+        el.querySelector(".dl-btn:not(.cp-btn)").addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          downloadEpisode(e.url, fname, ev.currentTarget);
+        });
+        el.querySelector(".cp-btn").addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          copyEpisodeLink(e.url, ev.currentTarget);
+        });
         list.appendChild(el);
       });
     }
