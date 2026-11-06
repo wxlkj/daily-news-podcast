@@ -305,25 +305,35 @@
     }
 
     async function fetchAudio(url) {
-      // 依次尝试各源（快的 CDN 优先），返回 Blob
-      let lastErr;
-      for (const src of cdnSources(url)) {
+      // 并发竞速：多个源同时请求，谁先成功就用谁并取消其余。
+      // 避免某个 CDN 卡住时要串行干等 90 秒（看起来像「下载失败/一直转圈」）。
+      const srcs = cdnSources(url);
+      const tmo = [20000, 20000, 90000]; // 两个 CDN 快速失败，同源兜底给足时间
+      const ctrls = srcs.map(() => new AbortController());
+      const attempts = srcs.map(async (src, i) => {
+        const timer = setTimeout(() => { try { ctrls[i].abort(); } catch (e) {} }, tmo[i]);
         try {
-          const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 90000);
-          let res;
-          try {
-            res = await fetch(src, { signal: ctrl.signal, cache: "no-store" });
-          } finally {
-            clearTimeout(timer);
-          }
+          const res = await fetch(src, { signal: ctrls[i].signal, cache: "no-store" });
           if (!res.ok) throw new Error("HTTP " + res.status);
           const blob = await res.blob();
           if (!blob || blob.size < 1024) throw new Error("空文件");
           return blob;
-        } catch (e) { lastErr = e; }
-      }
-      throw lastErr || new Error("全部下载源失败");
+        } finally { clearTimeout(timer); }
+      });
+      return await new Promise((resolve, reject) => {
+        let pending = attempts.length;
+        const errs = [];
+        attempts.forEach((pr, i) => {
+          pr.then((blob) => {
+            // 胜出后取消其余请求，节省带宽
+            ctrls.forEach((c, j) => { if (j !== i) { try { c.abort(); } catch (e) {} } });
+            resolve(blob);
+          }).catch((e) => {
+            errs.push(String(e && e.message || e));
+            if (--pending === 0) reject(new Error("全部下载源失败: " + errs.join("; ")));
+          });
+        });
+      });
     }
 
     // 公共下载动作：fetch→Blob→blob: 链接 <a download> 强制存文件
