@@ -47,6 +47,7 @@ GitHub Actions（两次定时）
 - `prompt_intl.md` / `prompt_politics_mil.md` / `prompt_edu.md` / `prompt_sports.md`：四套播报提示词。
 - `scripts/tts.py` 的 `VOICE` 可换音色。
 - `scripts/publish.py` 的 `KEEP_ITEMS=28`（约最近 7 天）滚动清理旧音频，控制仓库体积。
+- `docs/seen.json`：发布流程自动维护，记录最近 3 天已播标题指纹，供次日/次时段去重，不要手工编辑。
 
 ## 成本
 
