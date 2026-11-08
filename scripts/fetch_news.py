@@ -276,13 +276,45 @@ EDITION = os.environ.get("EDITION", "evening").lower()
 # 认领顺序：越专门的类目越先认领（同一事件不会被两篇简报重复播报）
 CLAIM_ORDER = ["sports", "culture_edu_health", "politics_mil", "international"]
 
+# 跨天/早晚去重：publish.py 每次发布后把已播标题指纹写进 docs/seen.json
+SEEN_PATH = "docs/seen.json"
+SEEN_DAYS = 2          # 只参考最近 2 天，避免长期累积误杀新条目
+
+
+def load_seen(skip_keys):
+    """读取最近 SEEN_DAYS 天已播条目的标题指纹。
+
+    skip_keys 为本次要重新生成的 {日期}_{类目} 键：忽略它们，保证同日重跑不会把自己清空。
+    """
+    try:
+        d = json.load(open(SEEN_PATH, encoding="utf-8"))
+    except Exception:
+        return set()
+    cutoff = (NOW - timedelta(days=SEEN_DAYS)).strftime("%Y-%m-%d")
+    fps = set()
+    for key, arr in d.items():
+        if key in skip_keys or key[:10] < cutoff:
+            continue
+        fps.update(x for x in arr if x)
+    return fps
+
+
+def drop_seen(items, fps):
+    """剔除最近已播过的条目（同一篇报道标题一致时命中）。"""
+    return [it for it in items if norm_title(it.get("title", "")) not in fps]
+
 
 def main():
     result = {"international": [], "politics_mil": [], "culture_edu_health": [], "sports": []}
 
     if EDITION in ("morning", "all"):
         intl_rss = SOURCES.get("international", {}).get("rss", [])
-        result["international"] = select(sort_unique(fetch_rss_feeds(intl_rss)), n=25)
+        intl = sort_unique(fetch_rss_feeds(intl_rss))
+        fps = load_seen({f"{NOW.strftime('%Y-%m-%d')}_international"})
+        n0 = len(intl)
+        intl = drop_seen(intl, fps)
+        print(f"[去重] international: 最近已播过滤 {n0 - len(intl)} 条")
+        result["international"] = select(intl, n=25)
 
     if EDITION in ("evening", "all"):
         pools = {}
@@ -305,6 +337,11 @@ def main():
 
         before = {c: len(v) for c, v in pools.items()}
         pools = {c: sort_unique(v) for c, v in pools.items()}
+        fps = load_seen({f"{NOW.strftime('%Y-%m-%d')}_{c}" for c in pools})
+        for c in pools:
+            n0 = len(pools[c])
+            pools[c] = drop_seen(pools[c], fps)
+            print(f"[去重] {c}: 最近已播过滤 {n0 - len(pools[c])} 条")
         dropped = claim_cross_category(pools, CLAIM_ORDER)
 
         result["politics_mil"] = select(pools["politics_mil"], n=18, military_first=True)
