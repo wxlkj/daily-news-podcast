@@ -9,6 +9,8 @@
 音频统一放在 docs/audio/{日期}_{类目}.mp3，由 Pages 同源提供。
 """
 import os
+import re
+import json
 import shutil
 import subprocess
 import sys
@@ -162,8 +164,41 @@ for it in ordered:
 tree.write(FEED, encoding="utf-8", xml_declaration=True)
 
 
+# 3e) 记录本次已播标题指纹，供后续运行做「跨天 / 早晚」去重。
+#     指纹算法须与 scripts/fetch_news.py 的 norm_title 保持一致。
+SEEN = Path("docs/seen.json")
+
+
+def _fp(t):
+    s = re.sub(r"\s+", "", t or "")
+    s = re.sub(r"^【[^】]{0,12}】|^\[[^\]]{0,12}\]", "", s)
+    s = re.sub(r"^(?:独家|快讯|突发|重磅|最新|视频|图文|组图|直播|专访|评论|关注|热点)[：:]?", "", s)
+    s = re.sub(
+        r"^(?:中新网|中新社|新华社|人民网|央视网|央视新闻|央视|环球网|参考消息|中国新闻网|"
+        r"路透社|法新社|美联社|共同社|BBC|CNN)[^：:|｜]{0,6}[：:|｜]?", "", s)
+    return re.sub(r"\W", "", s, flags=re.UNICODE).lower()
+
+
+try:
+    seen = json.loads(SEEN.read_text(encoding="utf-8")) if SEEN.exists() else {}
+except Exception:
+    seen = {}
+try:
+    news = json.load(open("news.json", encoding="utf-8"))
+except Exception:
+    news = {}
+for cat, *_ in pending:
+    seen[f"{TAG}_{cat}"] = [_fp(it.get("title", "")) for it in news.get(cat, []) if it.get("title")]
+# 只保留最近 3 天，控制文件体积
+cutoff = (datetime.datetime.now(BEIJING) - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
+seen = {k: v for k, v in seen.items() if k[:10] >= cutoff}
+SEEN.write_text(json.dumps(seen, ensure_ascii=False, indent=1), encoding="utf-8")
+print(f"已记录已播标题: {sum(len(v) for v in seen.values())} 条 / {len(seen)} 个批次")
+
+
 # 4) 提交并推送 feed.xml + 音频（*.mp3 被 .gitignore 忽略，必须 -f 强制添加）
 run(["git", "add", "docs/feed.xml"])
+run(["git", "add", "-f", str(SEEN)])
 run(["git", "add", "-A", "-f", "docs/audio/"])
 commit = subprocess.run(["git", "commit", "-m", f"update feed & audio {TAG} ({EDITION})"],
                         capture_output=True, text=True)
