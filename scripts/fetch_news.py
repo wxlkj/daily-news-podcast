@@ -5,13 +5,18 @@
   - evening : 国内时政·军事 + 文教卫 + 体育（供晚上 20:00 发布）
   - all     : 抓取全部四类（调试用，默认 evening）
 
-信源策略（2026-11-05 重构）：
-  - 骨架：中国新闻网(chinanews.com.cn) 多类目 RSS。其 <pubDate> 时间戳准确(带+0800)、
-    每条都带真实摘要，是「过去 24 小时 + 撑满 10–20 分钟」最可靠的来源。
+信源策略：
+  - 骨架：中国新闻网(chinanews.com.cn) 多类目 RSS，其 <pubDate> 时间戳准确(带+0800)、每条带真实摘要。
   - 补充：央视各频道网页抓取，按文章 URL 中的日期路径(cctv.com/YYYY/MM/DD/)做天粒度过滤，
     补充实时、带军事/体育热点的条目（央视网页条目多无摘要，故排序时摘要优先）。
   - 国际：境外 RSS（BBC/德国之声/Reuters/AP，线上 runner 可直达）+ 中新网国际兜底。
   - 已移除人民网：其 RSS 的 <pubDate> 是固定假常量(2025-06-05)，无法做时间过滤。
+
+去重策略（2026-11-08 强化）：
+  - 类目内：URL 规范化 + 标题规范化 + 标题相似度（最长公共连续字串 / 整体相似度）判定同一事件，
+    重复组里保留「带摘要、时间新」的一条，避免同一事件的滚动报道被当成多条。
+  - 跨类目：晚间三类目按「专门类目优先」（体育 → 文教卫 → 时政军事）认领条目，
+    同一事件只留在最贴切的类目，避免同一条新闻出现在两篇简报里。
 
 时间过滤：
   - 所有时间以「北京时间(Asia/Shanghai, UTC+8)」为基准，与用户的播报时区一致。
@@ -22,6 +27,7 @@ import os
 import re
 import json
 import email
+import difflib
 import yaml
 import socket
 import feedparser
@@ -66,7 +72,10 @@ def clean(text):
 
 
 def to_dt(iso):
-    return datetime.fromisoformat(iso)
+    try:
+        return datetime.fromisoformat(iso)
+    except Exception:
+        return datetime(1970, 1, 1, tzinfo=SHANGHAI)
 
 
 def in_window_rss(dt):
@@ -176,63 +185,148 @@ def parse_page(url):
     return items
 
 
-# ----------------------------- 合并去重 + 选取 -----------------------------
-def merge_select(items, n, military_first=False):
-    """合并去重（按标题前 12 字），优先带摘要的条目，按时间倒序取前 n。
+# ----------------------------- 去重与选取 -----------------------------
+def norm_title(s):
+    """标题规范化：去空白标点、去栏目/来源前缀，只留中英文数字，供相似度比较。"""
+    s = re.sub(r"\s+", "", s or "")
+    s = re.sub(r"^【[^】]{0,12}】", "", s)
+    s = re.sub(r"^\[[^\]]{0,12}\]", "", s)
+    s = re.sub(r"^(?:独家|快讯|突发|重磅|最新|视频|图文|组图|直播|专访|评论|关注|热点)[：:]?", "", s)
+    s = re.sub(
+        r"^(?:中新网|中新社|新华社|人民网|央视网|央视新闻|央视|环球网|参考消息|中国新闻网|"
+        r"路透社|法新社|美联社|共同社|BBC|CNN)[^：:|｜]{0,6}[：:|｜]?", "", s)
+    return re.sub(r"\W", "", s, flags=re.UNICODE).lower()
 
-    military_first: 时政·军事类目下，命中国防军事关键词的条目优先入选。
-    """
-    seen, uniq = set(), []
-    for it in items:
-        key = it.get("title", "")[:12]
-        if key in seen:
-            continue
-        seen.add(key)
-        uniq.append(it)
-    uniq.sort(key=lambda x: (
-        (0 if is_military(x) else 1) if military_first else 0,
-        0 if x.get("summary") else 1,        # 带摘要优先（减少编造）
-        -to_dt(x["published"]).timestamp(),  # 时间倒序
+
+def url_key(u):
+    u = (u or "").split("?")[0].split("#")[0].rstrip("/")
+    return re.sub(r"^https?://", "", u).lower()
+
+
+def same_event(a, b):
+    """判定两条是否为同一事件：URL 相同 / 标题相同 / 标题高度相似。"""
+    ua, ub = url_key(a.get("url")), url_key(b.get("url"))
+    if ua and ua == ub:
+        return True
+    ta, tb = norm_title(a.get("title")), norm_title(b.get("title"))
+    if not ta or not tb:
+        return False
+    if ta == tb:
+        return True
+    # 一方是另一方的子串：网页抓取常产生短标题碎片，与完整标题指同一篇报道
+    if min(len(ta), len(tb)) >= 8 and (ta in tb or tb in ta):
+        return True
+    sm = difflib.SequenceMatcher(None, ta, tb)
+    # 最长公共连续字串足够长、且几乎占满较短标题 → 几乎就是同一个标题的改写。
+    # 阈值刻意收紧：只合并"明显同一篇报道"的写法，避免把「高考报名通知」「高考体检通知」
+    # 这类前半句相同、实为两条不同新闻的条目误杀掉。
+    m = sm.find_longest_match(0, len(ta), 0, len(tb))
+    return m.size >= 12 and m.size >= 0.8 * min(len(ta), len(tb))
+
+
+def sort_unique(items):
+    """类目内去重：先按「带摘要优先 + 时间倒序」排序，重复组保留信息最全的一条。"""
+    ordered = sorted(items, key=lambda x: (
+        0 if x.get("summary") else 1,
+        -to_dt(x.get("published", "")).timestamp(),
     ))
-    return uniq[:n]
+    kept = []
+    for it in ordered:
+        if any(same_event(it, k) for k in kept):
+            continue
+        kept.append(it)
+    return kept
+
+
+def claim_cross_category(pools, order):
+    """跨类目去重：按「专门类目优先」依次认领，同一事件只留在最贴切的类目。
+
+    order 中越靠前的类目越专门（体育 > 文教卫 > 时政军事），
+    这样泛 RSS 里串进来的体育/教育条目会归到专门类目，不会在两篇简报里重复播报。
+    """
+    claimed = []
+    removed = {}
+    for cat in order:
+        if cat not in pools:
+            continue
+        kept, n_drop = [], 0
+        for it in pools[cat]:
+            if any(same_event(it, c) for c in claimed):
+                n_drop += 1
+                continue
+            kept.append(it)
+            claimed.append(it)
+        pools[cat] = kept
+        removed[cat] = n_drop
+    return removed
+
+
+def select(items, n, military_first=False):
+    """排序后取前 n：时政·军事类目下军事优先，其余按摘要完整度与时间倒序。"""
+    items = sorted(items, key=lambda x: (
+        (0 if is_military(x) else 1) if military_first else 0,
+        0 if x.get("summary") else 1,
+        -to_dt(x.get("published", "")).timestamp(),
+    ))
+    return items[:n]
 
 
 # ============================ 按 EDITION 抓取 ============================
 EDITION = os.environ.get("EDITION", "evening").lower()
-result = {"international": [], "politics_mil": [], "culture_edu_health": [], "sports": []}
+# 认领顺序：越专门的类目越先认领（同一事件不会被两篇简报重复播报）
+CLAIM_ORDER = ["sports", "culture_edu_health", "politics_mil", "international"]
 
-if EDITION in ("morning", "all"):
-    intl_rss = SOURCES.get("international", {}).get("rss", [])
-    result["international"] = merge_select(fetch_rss_feeds(intl_rss), n=25)
 
-if EDITION in ("evening", "all"):
-    pm = SOURCES.get("politics_mil", {})
-    pm_items = fetch_rss_feeds(pm.get("rss", []))
-    for w in pm.get("web", []):
-        pm_items += parse_page(w["url"])
-    result["politics_mil"] = merge_select(pm_items, n=18, military_first=True)
+def main():
+    result = {"international": [], "politics_mil": [], "culture_edu_health": [], "sports": []}
 
-    ceh = SOURCES.get("culture_edu_health", {})
-    ceh_items = fetch_rss_feeds(ceh.get("rss", []))
-    # 文教卫以中新网 RSS 为骨架即已充足，不再叠加央视网页（其文化/健康子域不稳定）
-    result["culture_edu_health"] = merge_select(ceh_items, n=18)
+    if EDITION in ("morning", "all"):
+        intl_rss = SOURCES.get("international", {}).get("rss", [])
+        result["international"] = select(sort_unique(fetch_rss_feeds(intl_rss)), n=25)
 
-    sp = SOURCES.get("sports", {})
-    sp_items = fetch_rss_feeds(sp.get("rss", []))
-    for w in sp.get("web", []):
-        sp_items += parse_page(w["url"])
-    result["sports"] = merge_select(sp_items, n=18)
+    if EDITION in ("evening", "all"):
+        pools = {}
 
-with open("news.json", "w", encoding="utf-8") as f:
-    json.dump(result, f, ensure_ascii=False, indent=2)
+        pm = SOURCES.get("politics_mil", {})
+        pm_items = fetch_rss_feeds(pm.get("rss", []))
+        for w in pm.get("web", []):
+            pm_items += parse_page(w["url"])
+        pools["politics_mil"] = pm_items
 
-print(f"EDITION={EDITION}  时区=Asia/Shanghai  窗口={HOURS}小时  现在={NOW.strftime('%Y-%m-%d %H:%M')}")
-for cat in ("international", "politics_mil", "culture_edu_health", "sports"):
-    items = result[cat]
-    n_sum = sum(1 for x in items if x.get("summary"))
-    n_mil = sum(1 for x in items if is_military(x))
-    print(f"  [{cat}] {len(items)} 条（带摘要 {n_sum}，军事 {n_mil}）")
-    for i, it in enumerate(items[:6], 1):
-        extra = " ★军事" if is_military(it) else ""
-        src = f"[{it.get('source','')}]"
-        print(f"    {i}. {src} {it['title']}{extra}")
+        ceh = SOURCES.get("culture_edu_health", {})
+        # 文教卫以中新网 RSS 为骨架即已充足，不再叠加央视网页（其文化/健康子域不稳定）
+        pools["culture_edu_health"] = fetch_rss_feeds(ceh.get("rss", []))
+
+        sp = SOURCES.get("sports", {})
+        sp_items = fetch_rss_feeds(sp.get("rss", []))
+        for w in sp.get("web", []):
+            sp_items += parse_page(w["url"])
+        pools["sports"] = sp_items
+
+        before = {c: len(v) for c, v in pools.items()}
+        pools = {c: sort_unique(v) for c, v in pools.items()}
+        dropped = claim_cross_category(pools, CLAIM_ORDER)
+
+        result["politics_mil"] = select(pools["politics_mil"], n=18, military_first=True)
+        result["culture_edu_health"] = select(pools["culture_edu_health"], n=18)
+        result["sports"] = select(pools["sports"], n=18)
+        for c in pools:
+            print(f"[去重] {c}: {before[c]} → 类目内去重 {len(pools[c])} → 跨类目移除 {dropped.get(c,0)}")
+
+    with open("news.json", "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+
+    print(f"EDITION={EDITION}  时区=Asia/Shanghai  窗口={HOURS}小时  现在={NOW.strftime('%Y-%m-%d %H:%M')}")
+    for cat in ("international", "politics_mil", "culture_edu_health", "sports"):
+        items = result[cat]
+        n_sum = sum(1 for x in items if x.get("summary"))
+        n_mil = sum(1 for x in items if is_military(x))
+        print(f"  [{cat}] {len(items)} 条（带摘要 {n_sum}，军事 {n_mil}）")
+        for i, it in enumerate(items[:6], 1):
+            extra = " ★军事" if is_military(it) else ""
+            src = f"[{it.get('source','')}]"
+            print(f"    {i}. {src} {it['title']}{extra}")
+
+
+if __name__ == "__main__":
+    main()
