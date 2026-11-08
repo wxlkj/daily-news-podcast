@@ -100,6 +100,15 @@ if channel.find("link") is None:
 if channel.find("{%s}image" % NS_ITUNES) is None:
     ET.SubElement(channel, "{%s}image" % NS_ITUNES).set("href", BASE_URL + "/cover.png")
 
+# 同步频道简介：不再写"约 10–20 分钟"（篇幅已改为随素材自适应，不凑时长）
+CHANNEL_DESC = ("每天 4 篇语音简报：早 06:00 国际新闻，晚 20:00 国内时政·军事、文教卫、体育。"
+                "只播报过去 24 小时新闻，逐条精简陈述、不加评论，时长随当天素材自适应。")
+_ch_desc = channel.find("description")
+if _ch_desc is None:
+    ET.SubElement(channel, "description").text = CHANNEL_DESC
+else:
+    _ch_desc.text = CHANNEL_DESC
+
 # 3a) 去重：只删除本次要发布的 guid（绝不能误删同一天其它时段的三篇）
 new_guids = {f"{TAG}_{cat}" for cat, _, _, _, _ in pending}
 for it in list(channel.findall("item")):
@@ -113,7 +122,7 @@ for cat, label, edition, sec, src in pending:
     ET.SubElement(item, "category").text = cat
     ET.SubElement(item, "pubDate").text = pubdate_for(edition, sec)
     ET.SubElement(item, "description").text = (
-        f"{label}简报 {TAG}，约 10–20 分钟，直接陈述、不加评论。")
+        f"{label}简报 {TAG}，逐条精简陈述、不加评论。")
     enc = ET.SubElement(item, "enclosure")
     enc.set("url", f"{BASE_URL}/audio/{TAG}_{cat}.mp3")
     enc.set("length", str(src.stat().st_size))
