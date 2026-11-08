@@ -4,7 +4,8 @@
 读取 news.json，对其中每个非空类目：
   - 加载对应的 prompt_<cat>.md 作为 system 提示
   - 生成 script_<cat>.txt
-每篇独立控制 10–20 分钟时长（提示词约束 + 字数硬下限 + 过短重试），无评论。
+每条新闻只用 1–2 句话讲清核心事实，不设字数/时长下限、不做「嫌短就重写扩充」，
+避免为凑时长而注水、铺陈或重复（2026-11-08 调整）。
 成品只保留逐条新闻内容：不说来源、无开场白、无结尾套话（双层清洗兜底）。
 """
 import os
@@ -26,10 +27,9 @@ CATS = {
     "sports": ("prompt_sports.md", "体育"),
 }
 
-# 字数约束：实测中文 TTS 约 4.2–4.8 字/秒 → 10 分钟≈2520–2880 字。
-# 硬性下限随当天条数自适应：条数少则下调（避免强行注水编造），条数多则保底 3600 字（≈13 分钟）。
-WARN_LOW = 3000      # 低于此值警告可能不足 10 分钟
-WARN_HIGH = 5200     # 高于此值警告可能超过 20 分钟
+# 不再设字数/时长下限：篇幅由新闻条数自然决定，宁短勿注水。
+# 下面这个系数仅用于日志里估算朗读时长（实测中文 TTS 约 4.2–4.8 字/秒）。
+CHARS_PER_SEC = 4.5
 
 # 结尾套话：仅当「最后一句」较短且整句命中时才丢弃，避免误伤最后一条新闻正文
 _CLOSING_PATTERNS = [
@@ -70,11 +70,6 @@ def strip_source(text):
         text = _BRACKET_SRC.sub("", text)
         text = _LEAD_PAREN_SRC.sub("", text, count=1)
     return text.strip()
-
-
-def hard_min(n_items):
-    """根据当天条数计算字数硬下限：至少 3000 字（≈10 分钟），至多 3600 字。"""
-    return min(3600, max(3000, n_items * 400))
 
 
 def clean_script(text):
@@ -130,7 +125,7 @@ def generate(prompt_template, items, label, extra=""):
                     {"role": "user", "content": user_content},
                 ],
                 temperature=0.7,
-                max_tokens=9000,
+                max_tokens=6000,
             )
             return resp.choices[0].message.content
         except (RateLimitError, APIError) as e:
@@ -163,26 +158,9 @@ def main():
             for it in items
         ]
         prompt_template = open(prompt_file, encoding="utf-8").read()
-        HARD_MIN = hard_min(len(items))
 
+        # 一次成稿，不因「偏短」而重写扩充：宁可短，也不要为凑时长注水。
         script = generate(prompt_template, items, label)
-
-        # 过短则多次重试：给出按条数折算的硬性字数目标，要求每条铺开具体事实
-        if len(script) < HARD_MIN:
-            per = max(250, HARD_MIN // max(1, len(items)))  # 每条至少应写的字数
-            for r in range(1, 6):
-                print(f"  [展开] {label} 仅 {len(script)} 字(<{HARD_MIN})，第 {r} 次重试扩充…")
-                extra = (
-                    f"（非常重要）你刚才的文稿只有约 {len(script)} 字，"
-                    f"远未达到「不少于 {HARD_MIN} 字、朗读 10 分钟以上」的硬性要求，这是绝不允许的。\n"
-                    f"请重新撰写：当前共有 {len(items)} 条新闻，请为【每一条】都写满约 {per}–{per+100} 字、"
-                    f"把该条的时间、地点、涉及方、数字、背景、来龙去脉用完整连贯的口语充分展开，"
-                    f"不要只复述标题或摘要原话，也不要省略任何一条。全文合计必须达到至少 {HARD_MIN} 字。"
-                    f"逐条编号、逐条写满，是确保时长的关键。"
-                )
-                script = generate(prompt_template, items, label, extra=extra)
-                if len(script) >= HARD_MIN:
-                    break
 
         # ② 生成后兜底清洗：确保「直接第一条、只有内容、无来源、无收尾套话」
         before = len(script)
@@ -195,13 +173,8 @@ def main():
         with open(out, "w", encoding="utf-8") as f:
             f.write(script)
         n = len(script)
-        if n < WARN_LOW:
-            tail = f" [警告] 偏短({n}字)，朗读可能不足 10 分钟"
-        elif n > WARN_HIGH:
-            tail = f" [警告] 偏长({n}字)，朗读可能超过 20 分钟"
-        else:
-            tail = " [时长区间OK]"
-        print(f"✓ {label} 文稿已生成（{out}），约 {n} 字{tail}")
+        minutes = n / CHARS_PER_SEC / 60
+        print(f"✓ {label} 文稿已生成（{out}），约 {n} 字，估算朗读 {minutes:.1f} 分钟（不设时长下限）")
 
 
 if __name__ == "__main__":
