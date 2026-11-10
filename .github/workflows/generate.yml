@@ -2,19 +2,16 @@ name: Generate Daily News Podcast
 
 on:
   schedule:
-    - cron: "0 22 * * *"   # UTC 22:00 = 北京 06:00 → 国际新闻（EDITION=morning）
-    - cron: "0 12 * * *"   # UTC 12:00 = 北京 20:00 → 国内时政军事/文教卫/体育（EDITION=evening）
-  workflow_dispatch:       # 手动触发测试，可指定时段
+    - cron: "0 12 * * *"   # UTC 12:00 = 北京 20:00 → 每天一期整合简报（国际+国内时政军事+文教卫+体育）
+  workflow_dispatch:       # 手动触发测试
     inputs:
       edition:
-        description: "发布时段（morning=国际；evening=晚间三篇；all=全部四篇）"
+        description: "发布范围（daily=每天一期整合简报，抓取全部四类）"
         required: true
-        default: "morning"
+        default: "daily"
         type: choice
         options:
-          - morning
-          - evening
-          - all
+          - daily
 
 permissions:
   contents: write          # 允许 publish.py 用 GITHUB_TOKEN 推送 feed.xml 与音频
@@ -23,8 +20,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # 定时触发时按匹配的 cron 决定时段；手动触发时用所选 edition
-      EDITION: ${{ github.event_name == 'schedule' && (github.event.schedule == '0 22 * * *' && 'morning' || 'evening') || inputs.edition }}
+      # 每天一期整合简报：一次抓全四类、合成单集（定时与手动触发均为 all）
+      EDITION: all
     steps:
       - uses: actions/checkout@v4
 
@@ -38,10 +35,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      - name: 显示本次时段
-        run: echo "EDITION=${EDITION}"
-
-      - name: 1. 抓取新闻
+      - name: 1. 抓取新闻（过去 24 小时，四类）
         run: python scripts/fetch_news.py
 
       - name: 2. 润色文稿（每类目独立成稿）
@@ -49,10 +43,13 @@ jobs:
         env:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
 
-      - name: 3. 生成语音（每类目独立音频）
+      - name: 3. 合并为整合文稿（全局连续编号 第1条…第N条）
+        run: python scripts/merge_scripts.py
+
+      - name: 4. 生成语音（单集音频）
         run: python scripts/tts.py
 
-      - name: 4. 发布到 Pages 并更新 feed
+      - name: 5. 发布到 Pages 并更新 feed
         run: python scripts/publish.py
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
