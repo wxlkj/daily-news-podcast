@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""发布：把本次时段各类目 MP3 托管到 GitHub Pages（同源，国内可访问），更新 docs/feed.xml。
+"""发布：把当天整合好的单集 MP3 托管到 GitHub Pages（同源，国内可访问），更新 docs/feed.xml。
 
-每天 4 篇，分两次运行：
-  - morning（北京 06:00）：国际新闻
-  - evening（北京 20:00）：国内时政·军事 / 文教卫 / 体育
-本次只发布「本时段生成」的类目，其余时段的 item 原样保留；
-同日同类目重跑按 guid 精确去重替换（不会误删同一天的其它三篇）。
-音频统一放在 docs/audio/{日期}_{类目}.mp3，由 Pages 同源提供。
+每天一期（北京 20:00 定时生成）：四类新闻整合为一段、全局连续编号，
+故每次只发布「一个」音频 + 「一条」item。
+
+音频统一放在 docs/audio/{日期}.mp3，由 Pages 同源提供。同日重跑按 guid={日期}
+精确去重替换，不会误删历史各期。
 """
 import os
 import re
@@ -23,20 +22,14 @@ REPO = "wxlkj/daily-news-podcast"
 BASE_URL = "https://wxlkj.github.io/daily-news-podcast"
 BEIJING = datetime.timezone(datetime.timedelta(hours=8))
 TAG = datetime.datetime.now(BEIJING).strftime("%Y-%m-%d")
-EDITION = os.environ.get("EDITION", "evening").lower()
 FEED = Path("docs/feed.xml")
 AUDIO_DIR = Path("docs/audio")
 NS_ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 ET.register_namespace("itunes", NS_ITUNES)
-KEEP_ITEMS = 28  # 约保留最近 7 天（4 篇/天），控制仓库体积
+KEEP_ITEMS = 28  # 每天 1 期，约保留最近 28 天，控制仓库体积
 
-# 类目 key -> (中文标签, 所属时段, pubDate 秒偏移：用于同类目内稳定排序)
-CATS = {
-    "international":      ("国际新闻",       "morning", 0),
-    "politics_mil":       ("国内时政·军事",  "evening", 3),
-    "culture_edu_health": ("文教卫",         "evening", 2),
-    "sports":             ("体育",           "evening", 1),
-}
+# 跨天去重记录用的类目键（与 fetch_news.py 的 CATS 一致）；仅用于写 docs/seen.json
+SEEN_CATS = ["international", "politics_mil", "culture_edu_health", "sports"]
 
 
 def run(cmd, check=True, **kw):
@@ -48,11 +41,10 @@ def run(cmd, check=True, **kw):
         raise
 
 
-def pubdate_for(edition, sec):
-    """按发布时段生成固定的北京时间 pubDate，让播放器排序稳定、时间显示整洁。"""
-    hour = 6 if edition == "morning" else 20
+def pubdate_for():
+    """固定的北京时间 20:00 pubDate，让播放器排序稳定、时间显示整洁。"""
     dt = datetime.datetime.strptime(TAG, "%Y-%m-%d").replace(
-        hour=hour, minute=0, second=sec, tzinfo=BEIJING)
+        hour=20, minute=0, second=0, tzinfo=BEIJING)
     return dt.strftime("%a, %d %b %Y %H:%M:%S +0800")
 
 
@@ -67,29 +59,20 @@ else:
     print("警告：未检测到 GH_TOKEN / GITHUB_TOKEN，git 推送可能失败", file=sys.stderr)
 
 
-# 1) 找出本次要发布的类目：存在对应音频，且属于本时段
+# 1) 找出本次要发布的单集音频
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-pending = []
-for cat, (label, edition, sec) in CATS.items():
-    src = Path(f"episode_final_{cat}.mp3")
-    if not src.exists():
-        continue
-    # EDITION=all（调试）时全部发布；否则只发布属于本时段的类目
-    if EDITION != "all" and edition != EDITION:
-        print(f"[skip] {label} 属于 {edition} 时段，本次 EDITION={EDITION} 不发布")
-        continue
-    pending.append((cat, label, edition, sec, src))
-
-if not pending:
-    print("!! 本次没有可发布的音频，发布中止（检查 polish/tts 是否成功、EDITION 是否匹配）",
+src = Path("episode_final.mp3")
+if not src.exists():
+    print("!! 未找到 episode_final.mp3（请先运行 fetch → polish → merge_scripts → tts），发布中止",
           file=sys.stderr)
     sys.exit(1)
+pending = [(TAG, src)]
 
 
 # 2) 复制音频到 Pages 托管目录（与网页同源，国内可访问）
-for cat, label, edition, sec, src in pending:
-    shutil.copy(src, AUDIO_DIR / f"{TAG}_{cat}.mp3")
-    print(f"音频已托管: {BASE_URL}/audio/{TAG}_{cat}.mp3（{label}，{src.stat().st_size} 字节）")
+for tag, s in pending:
+    shutil.copy(s, AUDIO_DIR / f"{tag}.mp3")
+    print(f"音频已托管: {BASE_URL}/audio/{tag}.mp3（{s.stat().st_size} 字节）")
 
 
 # 3) 更新 feed.xml
@@ -102,36 +85,36 @@ if channel.find("link") is None:
 if channel.find("{%s}image" % NS_ITUNES) is None:
     ET.SubElement(channel, "{%s}image" % NS_ITUNES).set("href", BASE_URL + "/cover.png")
 
-# 同步频道简介：不再写"约 10–20 分钟"（篇幅已改为随素材自适应，不凑时长）
-CHANNEL_DESC = ("每天 4 篇语音简报：早 06:00 国际新闻，晚 20:00 国内时政·军事、文教卫、体育。"
-                "只播报过去 24 小时新闻，逐条精简陈述、不加评论，时长随当天素材自适应。")
+# 同步频道简介：每天一期整合简报，全局连续编号，不凑时长
+CHANNEL_DESC = ("每天 20:00 一期整合语音简报：覆盖过去 24 小时国际、国内时政·军事、文教卫、体育，"
+                "第1条到第N条连续播报、不加评论，时长随当天素材自适应。")
 _ch_desc = channel.find("description")
 if _ch_desc is None:
     ET.SubElement(channel, "description").text = CHANNEL_DESC
 else:
     _ch_desc.text = CHANNEL_DESC
 
-# 3a) 去重：只删除本次要发布的 guid（绝不能误删同一天其它时段的三篇）
-new_guids = {f"{TAG}_{cat}" for cat, _, _, _, _ in pending}
+# 3a) 去重：只删除本次要发布的 guid（同日重跑替换，不误删历史各期）
+new_guids = {tag for tag, _ in pending}
 for it in list(channel.findall("item")):
     if it.findtext("guid") in new_guids:
         channel.remove(it)
 
-# 3b) 新建各类目 item，插到第一个已有 item 之前（保持频道元数据在最前）
-for cat, label, edition, sec, src in pending:
+# 3b) 新建单条 item，插到第一个已有 item 之前（保持频道元数据在最前）
+for tag, s in pending:
     item = ET.SubElement(channel, "item")
-    ET.SubElement(item, "title").text = f"{label} {TAG}"
-    ET.SubElement(item, "category").text = cat
-    ET.SubElement(item, "pubDate").text = pubdate_for(edition, sec)
+    ET.SubElement(item, "title").text = f"每日新闻 {tag}"
+    ET.SubElement(item, "pubDate").text = pubdate_for()
     ET.SubElement(item, "description").text = (
-        f"{label}简报 {TAG}，逐条精简陈述、不加评论。")
+        f"每日整合简报 {tag}，覆盖过去 24 小时国际、国内时政·军事、文教卫、体育，"
+        f"第1条到第N条连续播报、不加评论。")
     enc = ET.SubElement(item, "enclosure")
-    enc.set("url", f"{BASE_URL}/audio/{TAG}_{cat}.mp3")
-    enc.set("length", str(src.stat().st_size))
+    enc.set("url", f"{BASE_URL}/audio/{tag}.mp3")
+    enc.set("length", str(s.stat().st_size))
     enc.set("type", "audio/mpeg")
-    ET.SubElement(item, "guid").text = f"{TAG}_{cat}"
+    ET.SubElement(item, "guid").text = tag
     itunes_dur = ET.SubElement(item, "{%s}duration" % NS_ITUNES)
-    itunes_dur.text = f"{int(src.stat().st_size * 8 / 64000 / 60):02d}:00"
+    itunes_dur.text = f"{int(s.stat().st_size * 8 / 64000 / 60):02d}:00"
     channel.remove(item)
     children = list(channel)
     idx = next((i for i, c in enumerate(children) if c.tag == "item"), len(children))
@@ -145,6 +128,7 @@ def parse_date(it):
                                           "%a, %d %b %Y %H:%M:%S +0800")
     except Exception:
         return datetime.datetime.min
+
 
 for old in sorted(channel.findall("item"), key=parse_date, reverse=True)[KEEP_ITEMS:]:
     g = old.findtext("guid") or ""
@@ -164,7 +148,7 @@ for it in ordered:
 tree.write(FEED, encoding="utf-8", xml_declaration=True)
 
 
-# 3e) 记录本次已播标题指纹，供后续运行做「跨天 / 早晚」去重。
+# 3e) 记录本次已播标题指纹，供后续运行做「跨天」去重。
 #     指纹算法须与 scripts/fetch_news.py 的 norm_title 保持一致。
 SEEN = Path("docs/seen.json")
 
@@ -187,7 +171,7 @@ try:
     news = json.load(open("news.json", encoding="utf-8"))
 except Exception:
     news = {}
-for cat, *_ in pending:
+for cat in SEEN_CATS:
     seen[f"{TAG}_{cat}"] = [_fp(it.get("title", "")) for it in news.get(cat, []) if it.get("title")]
 # 只保留最近 3 天，控制文件体积
 cutoff = (datetime.datetime.now(BEIJING) - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
@@ -200,7 +184,7 @@ print(f"已记录已播标题: {sum(len(v) for v in seen.values())} 条 / {len(s
 run(["git", "add", "docs/feed.xml"])
 run(["git", "add", "-f", str(SEEN)])
 run(["git", "add", "-A", "-f", "docs/audio/"])
-commit = subprocess.run(["git", "commit", "-m", f"update feed & audio {TAG} ({EDITION})"],
+commit = subprocess.run(["git", "commit", "-m", f"update feed & audio {TAG}"],
                         capture_output=True, text=True)
 print(commit.stdout, commit.stderr)
 branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"]).decode().strip()
@@ -220,4 +204,4 @@ for attempt in range(1, 6):
 else:
     print("!! git push 多次失败，音频与 feed 已在本地生成，可等下次运行重试", file=sys.stderr)
 
-print("发布完成：", TAG, EDITION, [c for c, _, _, _, _ in pending])
+print("发布完成：", TAG)
