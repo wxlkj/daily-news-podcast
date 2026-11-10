@@ -205,20 +205,18 @@
     let filter = "all";
 
     // 类目 key -> 展示信息（与 feed.xml 的 <category> 对应）
+    // 现在每天只有一期整合简报（无类目标签），统一显示「每日」；
+    // 旧版带类目的 item 仍按原标签着色，保证历史节目可读。
     const CATS = {
+      daily:             { label: "每日",     color: "#4c8dff" },
       international:      { label: "国际",     color: "#4c8dff" },
       politics_mil:       { label: "时政军事", color: "#ff7a7a" },
       culture_edu_health: { label: "文教卫",   color: "#57c98a" },
       sports:             { label: "体育",     color: "#e6a23c" },
       legacy:             { label: "往期",     color: "#8a9bbd" },
     };
-    const FILTERS = [
-      { key: "all",                 label: "全部" },
-      { key: "international",       label: "国际" },
-      { key: "politics_mil",        label: "时政军事" },
-      { key: "culture_edu_health",  label: "文教卫" },
-      { key: "sports",              label: "体育" },
-    ];
+    // 整合后不再做类目筛选（每天一期），保留此变量仅为兼容旧数据
+    const FILTERS = [{ key: "all", label: "全部" }];
 
     function esc(s) {
       return (s || "").replace(/[&<>"]/g, (c) =>
@@ -424,6 +422,11 @@
 
     function renderFilters() {
       const box = $("filters");
+      // 整合后每天一期、无类目维度，筛选栏无意义 → 隐藏
+      if (!box || FILTERS.length <= 1) {
+        if (box) box.style.display = "none";
+        return;
+      }
       box.innerHTML = "";
       FILTERS.forEach((f) => {
         const el = document.createElement("div");
@@ -499,7 +502,7 @@
           const url = enc ? enc.getAttribute("url") : "";
           const length = enc ? parseInt(enc.getAttribute("length") || "0", 10) : 0;
           const catRaw = (it.querySelector("category") || {}).textContent || "";
-          const cat = CATS[catRaw] ? catRaw : "legacy";
+          const cat = CATS[catRaw] ? catRaw : (catRaw ? "legacy" : "daily");
           const d = parseDate(pub);
           return { title, pub, url, length, cat, ts: d ? d.getTime() : 0 };
         }).sort((a, b) => b.ts - a.ts);
